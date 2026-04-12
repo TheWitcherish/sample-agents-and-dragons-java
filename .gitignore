@@ -1,16 +1,63 @@
-# Compiled class file
+# Build output
+*target/
+*build/
+*out/
 *.class
 
-# Log file
+# IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+*.code-workspace
+.settings/
+.classpath
+.project
+.factorypath
+*.swp
+*~
+
+# IDE/tools
+.claude/
+.omc/
+CLAUDE.md
+.claudeignore
+.mcp.json
+.mcp/
+.kiro/
+.cursor/
+.windsurf/
+
+# Maven
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+
+# Gradle
+.gradle/
+gradle-app.setting
+!gradle-wrapper.jar
+.gradletasknamecache
+
+# Logs
 *.log
+logs/
 
-# BlueJ files
-*.ctxt
+# OS files
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
 
-# Mobile Tools for Java (J2ME)
-.mtj.tmp/
-
-# Package Files #
+# Package files
 *.jar
 *.war
 *.nar
@@ -19,6 +66,28 @@
 *.tar.gz
 *.rar
 
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
+# JVM crash logs
 hs_err_pid*
 replay_pid*
+
+# Spring Boot
+*.pid
+
+# Environment/secrets
+.env
+.env.local
+*.env
+application-local.yml
+application-local.properties
+*-secret.yml
+*-secret.properties
+
+# Test output
+test-output/
+surefire-reports/
+
+# Temp files
+*.tmp
+*.temp
+*.bak
+*.pdf
