@@ -13,16 +13,16 @@ export const AGENT_PATTERN_RULES: Record<TeamPattern, AgentPatternConfig> = {
     generateConnections: () => []
   },
   
-  hierarchical: {
+  orchestrator: {
     primaryAgentRequired: true,
     generateConnections: (agents: string[], primaryAgent: string) => {
       const entryPoint = primaryAgent || agents[0];
       const otherAgents = agents.filter(id => id !== entryPoint);
-      
+
       return otherAgents.map(target => ({
         source: entryPoint,
         target,
-        description: 'Hierarchical delegation'
+        description: 'Orchestrator delegation'
       }));
     }
   },

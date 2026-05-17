@@ -3,7 +3,7 @@ import { verifyOwner } from '../functions/verify-owner/resource';
 import { manageTasks } from '../functions/manage-tasks/ressource';
 import { invokeAgentRuntime } from '../functions/invoke-agent-runtime/resource';
 
-const agenticPatterns = ['mono', 'hierarchical', 'swarm', 'graph'];
+const agenticPatterns = ['mono', 'orchestrator', 'swarm', 'graph'];
 const TASK_STATUS = ['CREATED', 'IN_PROGRESS', 'COMPLETED','ABORTED','ON_ERROR'];
 const PROJECT_STATUS = ['CREATED', 'IN_PROGRESS', 'COMPLETED','ABORTED','ON_ERROR'];
 const AGENT_STATUS = ['READY', 'WORKING', 'THINKING', 'USING_TOOL', 'WAITING', 'STOPPED'];

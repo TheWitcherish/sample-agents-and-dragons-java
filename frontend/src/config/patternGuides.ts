@@ -65,7 +65,7 @@ export const getPatternGuides = (pattern: TeamPattern): { nodes: Node[]; edges: 
         edges: [],
       };
 
-    case 'hierarchical':
+    case 'orchestrator':
       return {
         nodes: [
           {

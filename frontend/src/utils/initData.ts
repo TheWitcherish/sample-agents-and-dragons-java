@@ -13,7 +13,7 @@ export const agentsInitialData = [
         speed: 50,
         precision: 90,
         frugality: 45,
-        compatiblePatterns: ["swarm", "graph", "hierarchical"],
+        compatiblePatterns: ["swarm", "graph", "orchestrator"],
         cost: 3,
     },
     {
@@ -29,7 +29,7 @@ export const agentsInitialData = [
         speed: 75,
         precision: 60,
         frugality: 65,
-        compatiblePatterns: ["swarm", "graph", "hierarchical"],
+        compatiblePatterns: ["swarm", "graph", "orchestrator"],
         cost: 1,
     },
     {
@@ -61,7 +61,7 @@ export const agentsInitialData = [
         speed: 60,
         precision: 85,
         frugality: 45,
-        compatiblePatterns: ["swarm", "graph", "hierarchical"],
+        compatiblePatterns: ["swarm", "graph", "orchestrator"],
         cost: 2,
     },
     {
@@ -77,7 +77,7 @@ export const agentsInitialData = [
         speed: 55,
         precision: 66,
         frugality: 58,
-        compatiblePatterns: ["hierarchical", "graph"],
+        compatiblePatterns: ["orchestrator", "graph"],
         cost: 1,
     },
     {
@@ -93,7 +93,7 @@ export const agentsInitialData = [
         speed: 20,
         precision: 100,
         frugality: 10,
-        compatiblePatterns: ["hierarchical", "swarm", "graph"],
+        compatiblePatterns: ["orchestrator", "swarm", "graph"],
         cost: 7,
     },
     {
@@ -109,7 +109,7 @@ export const agentsInitialData = [
         speed: 65,
         precision: 42,
         frugality: 65,
-        compatiblePatterns: ["swarm", "graph", "hierarchical"],
+        compatiblePatterns: ["swarm", "graph", "orchestrator"],
         cost: 1,
     },
     {
@@ -125,7 +125,7 @@ export const agentsInitialData = [
         speed: 50,
         precision: 90,
         frugality: 45,
-        compatiblePatterns: ["mono", "swarm", "hierarchical", "graph"],
+        compatiblePatterns: ["mono", "swarm", "orchestrator", "graph"],
         cost: 3,
     },
     {
@@ -141,7 +141,7 @@ export const agentsInitialData = [
         speed: 50,
         precision: 90,
         frugality: 45,
-        compatiblePatterns: ["hierarchical", "swarm", "graph"],
+        compatiblePatterns: ["orchestrator", "swarm", "graph"],
         cost: 3,
     },
     {
@@ -157,7 +157,7 @@ export const agentsInitialData = [
         speed: 50,
         precision: 90,
         frugality: 45,
-        compatiblePatterns: ["Mono", "hierarchical", "swarm", "graph"],
+        compatiblePatterns: ["mono", "orchestrator", "swarm", "graph"],
         cost: 3,
     },
     {
@@ -173,7 +173,7 @@ export const agentsInitialData = [
         speed: 20,
         precision: 100,
         frugality: 10,
-        compatiblePatterns: ["hierarchical", "swarm", "graph"],
+        compatiblePatterns: ["orchestrator", "swarm", "graph"],
         cost: 7,
     },
     {
@@ -189,7 +189,7 @@ export const agentsInitialData = [
         speed: 65,
         precision: 42,
         frugality: 65,
-        compatiblePatterns: ["swarm", "graph", "hierarchical"],
+        compatiblePatterns: ["swarm", "graph", "orchestrator"],
         cost: 1,
     },
     {
@@ -221,7 +221,7 @@ export const agentsInitialData = [
         speed: 20,
         precision: 100,
         frugality: 10,
-        compatiblePatterns: ["swarm", "graph", "hierarchical"],
+        compatiblePatterns: ["swarm", "graph", "orchestrator"],
         cost: 7,
     },
     {
@@ -237,7 +237,7 @@ export const agentsInitialData = [
         speed: 75,
         precision: 65,
         frugality: 60,
-        compatiblePatterns: ["hierarchical", "swarm", "graph"],
+        compatiblePatterns: ["orchestrator", "swarm", "graph"],
         cost: 1,
     },
     {
@@ -253,7 +253,7 @@ export const agentsInitialData = [
         speed: 50,
         precision: 90,
         frugality: 45,
-        compatiblePatterns: ["hierarchical", "swarm", "graph"],
+        compatiblePatterns: ["orchestrator", "swarm", "graph"],
         cost: 3,
     },
     {
@@ -269,7 +269,7 @@ export const agentsInitialData = [
         speed: 60,
         precision: 35,
         frugality: 40,
-        compatiblePatterns: ["swarm", "graph", "hierarchical"],
+        compatiblePatterns: ["swarm", "graph", "orchestrator"],
         cost: 1,
     },
     {
@@ -285,7 +285,7 @@ export const agentsInitialData = [
         speed: 50,
         precision: 90,
         frugality: 45,
-        compatiblePatterns: ["hierarchical", "swarm", "graph"],
+        compatiblePatterns: ["orchestrator", "swarm", "graph"],
         cost: 3,
     },
 ]

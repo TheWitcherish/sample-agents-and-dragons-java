@@ -4,7 +4,7 @@ import type { TeamPattern } from '../../types';
 
 describe('AGENT_PATTERN_RULES', () => {
   it('defines rules for all four patterns', () => {
-    const patterns: TeamPattern[] = ['mono', 'hierarchical', 'graph', 'swarm'];
+    const patterns: TeamPattern[] = ['mono', 'orchestrator', 'graph', 'swarm'];
     patterns.forEach(p => {
       expect(AGENT_PATTERN_RULES[p]).toBeDefined();
       expect(AGENT_PATTERN_RULES[p].generateConnections).toBeTypeOf('function');
@@ -22,13 +22,13 @@ describe('AGENT_PATTERN_RULES', () => {
     });
   });
 
-  describe('hierarchical', () => {
+  describe('orchestrator', () => {
     it('requires a primary agent', () => {
-      expect(AGENT_PATTERN_RULES.hierarchical.primaryAgentRequired).toBe(true);
+      expect(AGENT_PATTERN_RULES.orchestrator.primaryAgentRequired).toBe(true);
     });
 
     it('generates connections from primary to all others', () => {
-      const connections = AGENT_PATTERN_RULES.hierarchical.generateConnections(
+      const connections = AGENT_PATTERN_RULES.orchestrator.generateConnections(
         ['leader', 'w1', 'w2'],
         'leader'
       );
@@ -39,7 +39,7 @@ describe('AGENT_PATTERN_RULES', () => {
     });
 
     it('uses first agent as fallback when primaryAgent is empty', () => {
-      const connections = AGENT_PATTERN_RULES.hierarchical.generateConnections(
+      const connections = AGENT_PATTERN_RULES.orchestrator.generateConnections(
         ['a', 'b', 'c'],
         ''
       );
@@ -48,7 +48,7 @@ describe('AGENT_PATTERN_RULES', () => {
     });
 
     it('returns empty connections for single agent', () => {
-      const connections = AGENT_PATTERN_RULES.hierarchical.generateConnections(['a'], 'a');
+      const connections = AGENT_PATTERN_RULES.orchestrator.generateConnections(['a'], 'a');
       expect(connections).toEqual([]);
     });
   });
@@ -93,19 +93,19 @@ describe('validateAgentSelection', () => {
   });
 
   it('rejects when primary agent is required but missing', () => {
-    const result = validateAgentSelection('hierarchical', ['a1', 'a2'], '');
+    const result = validateAgentSelection('orchestrator', ['a1', 'a2'], '');
     expect(result.isValid).toBe(false);
     expect(result.error).toContain('Primary agent must be selected');
   });
 
   it('rejects when primary agent is not in selected agents', () => {
-    const result = validateAgentSelection('hierarchical', ['a1', 'a2'], 'a3');
+    const result = validateAgentSelection('orchestrator', ['a1', 'a2'], 'a3');
     expect(result.isValid).toBe(false);
     expect(result.error).toContain('Primary agent must be in selected agents');
   });
 
-  it('validates a valid hierarchical selection', () => {
-    const result = validateAgentSelection('hierarchical', ['a1', 'a2', 'a3'], 'a1');
+  it('validates a valid orchestrator selection', () => {
+    const result = validateAgentSelection('orchestrator', ['a1', 'a2', 'a3'], 'a1');
     expect(result).toEqual({ isValid: true });
   });
 

@@ -95,7 +95,7 @@ export const ProjectNetworkGraph: React.FC<ProjectNetworkGraphProps> = ({
         let targetPosition = Position.Top;
         let sourcePosition = Position.Bottom;
         
-        if (project.teamPattern === 'hierarchical') {
+        if (project.teamPattern === 'orchestrator') {
           if (agentRun.agentId === project.teamEntrypoint) {
             targetPosition = Position.Bottom;
             sourcePosition = Position.Bottom;
@@ -142,8 +142,8 @@ export const ProjectNetworkGraph: React.FC<ProjectNetworkGraphProps> = ({
         new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
       );
 
-      // Fix hierarchical pattern transitions
-      const correctedTransitions = project.teamPattern === 'hierarchical' 
+      // Fix orchestrator pattern transitions
+      const correctedTransitions = project.teamPattern === 'orchestrator'
         ? sortedTransitions.flatMap(transition => {
             const entrypoint = project.teamEntrypoint;
             if (transition.sourceAgentId !== entrypoint && transition.targetAgentId !== entrypoint) {

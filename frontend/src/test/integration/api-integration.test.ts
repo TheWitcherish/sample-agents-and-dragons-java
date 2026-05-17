@@ -79,7 +79,7 @@ describe('API Integration Tests with MSW', () => {
             input: {
               name: 'New Test Project',
               prompt: 'Test prompt',
-              agentsPattern: 'hierarchical',
+              agentsPattern: 'orchestrator',
               status: 'active',
               url: '',
             },
@@ -92,7 +92,7 @@ describe('API Integration Tests with MSW', () => {
       
       expect(data.data.createProject).toMatchObject({
         name: 'New Test Project',
-        agentsPattern: 'hierarchical',
+        agentsPattern: 'orchestrator',
         status: 'active',
       })
       expect(data.data.createProject.id).toBeDefined()

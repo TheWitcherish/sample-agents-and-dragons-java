@@ -15,7 +15,7 @@ interface PatternRuntimeMappingProps {
   }>;
 }
 
-const AGENT_PATTERNS = ['mono', 'hierarchical', 'swarm', 'graph'];
+const AGENT_PATTERNS = ['mono', 'orchestrator', 'swarm', 'graph'];
 
 const PatternRuntimeMapping: React.FC<PatternRuntimeMappingProps> = ({ agentRuntimes }) => {
   const [mappings, setMappings] = useState<Array<{
@@ -135,8 +135,8 @@ const getPatternDescription = (pattern: string): string => {
   switch (pattern) {
     case 'mono':
       return 'Single agent handles all tasks';
-    case 'hierarchical':
-      return 'Agents organized in hierarchy with delegation';
+    case 'orchestrator':
+      return 'Orchestrator agent delegates to specialists wrapped as tools';
     case 'swarm':
       return 'Collaborative agents working together';
     case 'graph':

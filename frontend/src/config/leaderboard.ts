@@ -13,7 +13,7 @@ export const LEADERBOARD_CONFIG = {
 
 export const PATTERN_MULTIPLIERS = {
   mono: 0.8,
-  hierarchical: 1.0,
+  orchestrator: 1.0,
   swarm: 1.1,
   graph: 1.2
 };

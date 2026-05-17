@@ -11,14 +11,14 @@ public class PatternDispatcher {
     private static final Logger log = LoggerFactory.getLogger(PatternDispatcher.class);
 
     private final MonoPattern mono;
-    private final HierarchicalPattern hierarchical;
+    private final OrchestratorPattern orchestrator;
     private final GraphPattern graph;
     private final SwarmPattern swarm;
 
-    public PatternDispatcher(MonoPattern mono, HierarchicalPattern hierarchical,
+    public PatternDispatcher(MonoPattern mono, OrchestratorPattern orchestrator,
                              GraphPattern graph, SwarmPattern swarm) {
         this.mono = mono;
-        this.hierarchical = hierarchical;
+        this.orchestrator = orchestrator;
         this.graph = graph;
         this.swarm = swarm;
     }
@@ -28,10 +28,10 @@ public class PatternDispatcher {
         log.info("Dispatching pattern '{}' for project={} ({} agents)",
                 pattern, payload.project().id(), payload.team().agents().size());
         return switch (pattern) {
-            case "mono" -> mono.run(payload.project(), payload.team());
-            case "hierarchical" -> hierarchical.run(payload.project(), payload.team());
-            case "graph" -> graph.run(payload.project(), payload.team());
-            case "swarm" -> swarm.run(payload.project(), payload.team());
+            case "mono" -> mono.run(payload.project(), payload.team(), payload.config());
+            case "orchestrator" -> orchestrator.run(payload.project(), payload.team(), payload.config());
+            case "graph" -> graph.run(payload.project(), payload.team(), payload.config());
+            case "swarm" -> swarm.run(payload.project(), payload.team(), payload.config());
             default -> throw new IllegalArgumentException("Unknown pattern: " + pattern);
         };
     }

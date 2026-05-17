@@ -4,10 +4,10 @@ export type TaskStatus = 'CREATED' | 'IN_PROGRESS' | 'COMPLETED' | 'ABORTED' | '
 export type ProjectStatus = 'CREATED' | 'IN_PROGRESS' | 'COMPLETED' | 'ABORTED' | 'ON_ERROR';
 
 // Agent pattern options
-export type TeamPattern = 
-  | "mono" 
-  | "hierarchical" 
-  | "swarm" 
+export type TeamPattern =
+  | "mono"
+  | "orchestrator"
+  | "swarm"
   | "graph";
 
 

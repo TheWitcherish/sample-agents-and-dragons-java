@@ -1,5 +1,6 @@
 package com.witcherish.samples.agents.patterns;
 
+import com.witcherish.samples.agents.api.dto.Config;
 import com.witcherish.samples.agents.api.dto.Project;
 import com.witcherish.samples.agents.api.dto.Team;
 import org.springframework.stereotype.Component;
@@ -11,7 +12,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class SwarmPattern {
 
-    public PatternResult run(Project project, Team team) {
+    public PatternResult run(Project project, Team team, Config config) {
         throw new UnsupportedOperationException("SwarmPattern arrives at Step 9 / CHECKPOINT 4");
     }
 }

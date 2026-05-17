@@ -1,6 +1,6 @@
 # sample-agents-and-dragons
 
-**Agents and Dragons** is a Java application that demonstrates the canonical agentic AI patterns — **Mono**, **Hierarchical**, **Graph**, **Swarm** — built on **Spring AI Community AgentCore** + Amazon Bedrock. It ships with a React frontend so you can build agent teams interactively and watch them work end-to-end on your own machine.
+**Agents and Dragons** is a Java application that demonstrates the canonical agentic AI patterns — **Mono**, **Orchestrator**, **Graph**, **Swarm** — built on **Spring AI Community AgentCore** + Amazon Bedrock. It ships with a React frontend so you can build agent teams interactively and watch them work end-to-end on your own machine.
 
 | Tier | Pin |
 |---|---|
@@ -275,7 +275,7 @@ sample-agents-and-dragons/
 │       ├── patterns/
 │       │   ├── PatternDispatcher.java
 │       │   ├── MonoPattern.java            # ✅ Pattern 1.1 — Basic Reasoning
-│       │   ├── HierarchicalPattern.java    # 🚧 Pattern 4.2 — Supervisor
+│       │   ├── OrchestratorPattern.java    # ✅ Pattern 4.2 — Agents as Tools (Strands doctrine)
 │       │   ├── GraphPattern.java           # 🚧 Pattern 4.1 — Workflow DAG
 │       │   └── SwarmPattern.java           # 🚧 Pattern 4.2 — Peer + handoff
 │       └── tools/
@@ -304,7 +304,7 @@ You'll insert one row per pattern you want to expose:
 | `agentsPattern` | `runtimeName` | `runtimeArn` |
 |---|---|---|
 | `mono` | (e.g. `agents-and-dragons-mono`) | `arn:aws:bedrock-agentcore:<region>:<account>:runtime/<id>` |
-| `hierarchical` | … | … |
+| `orchestrator` | … | … |
 | `graph` | … | … |
 | `swarm` | … | … |
 
@@ -358,7 +358,7 @@ aws dynamodb put-item \
 Aligned with the talk-flow:
 
 - [x] **Step 6 — Mono** (Pattern 1.1, Basic Reasoning) — single specialist agent.
-- [ ] **Step 7 — Hierarchical** (Pattern 4.2, Supervisor) — orchestrator delegates to specialists wrapped as tools.
+- [x] **Step 7 — Orchestrator** (Pattern 4.2, "Agents as Tools" — Strands doctrine) — entrypoint agent routes sub-tasks to specialists wrapped as tools, then synthesises a single answer.
 - [ ] **Step 8 — Graph** (Pattern 4.1, Workflow DAG) — agents executed in topological order from `team.connections`.
 - [ ] **Step 9 — Swarm** (Pattern 4.2, Peer + handoff) — peer agents with a `handoff_to_agent` tool and a bounded loop.
 - [ ] **Step 12 — AgentCore deployment** — package the Java backend as a Bedrock AgentCore Runtime container (multi-stage Dockerfile + ECR + `CfnRuntime` in `CONTAINER` mode), CDK construct that builds + pushes the image, Custom Resource that seeds `AgentsPatternRuntime` automatically.

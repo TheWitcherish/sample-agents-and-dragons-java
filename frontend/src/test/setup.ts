@@ -26,7 +26,7 @@ const getInitialMockProjects = () => [
     id: '2',
     name: 'Test Project 2',
     prompt: 'Create a mobile app',
-    agentsPattern: 'hierarchical',
+    agentsPattern: 'orchestrator',
     status: 'completed',
     url: 'https://example.com/project2',
     createdAt: '2024-01-02T00:00:00Z',
