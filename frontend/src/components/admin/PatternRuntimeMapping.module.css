@@ -1,0 +1,103 @@
+.patternRuntimeMapping {
+  background: white;
+  border-radius: 8px;
+  padding: 24px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  margin-bottom: 24px;
+}
+
+.patternRuntimeMapping h3 {
+  margin: 0 0 8px 0;
+  color: #232f3e;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.description {
+  color: #666;
+  margin: 0 0 24px 0;
+  font-size: 0.9rem;
+}
+
+.mappingGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.mappingRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border: 1px solid #e1e5e9;
+  border-radius: 6px;
+  background: #fafbfc;
+}
+
+.patternInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.patternName {
+  font-weight: 600;
+  color: #232f3e;
+  text-transform: capitalize;
+}
+
+.patternDescription {
+  font-size: 0.85rem;
+  color: #666;
+}
+
+.runtimeSelect {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 250px;
+}
+
+.select {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: white;
+  font-size: 0.9rem;
+}
+
+.select:focus {
+  outline: none;
+  border-color: #ff9900;
+  box-shadow: 0 0 0 2px rgba(255, 153, 0, 0.2);
+}
+
+.select:disabled {
+  background: #f3f4f6;
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
+.noRuntimes {
+  text-align: center;
+  padding: 32px;
+  color: #666;
+  background: #f9fafb;
+  border-radius: 6px;
+  border: 1px dashed #d1d5db;
+}
+
+@media (max-width: 768px) {
+  .mappingRow {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  
+  .runtimeSelect {
+    min-width: auto;
+  }
+}

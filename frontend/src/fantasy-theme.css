@@ -1,0 +1,302 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Kalam:wght@300;400;700&display=swap');
+
+/* Fantasy Theme Styles */
+
+.fantasy-app {
+  font-family: 'Cinzel', serif;
+  background: 
+    linear-gradient(135deg, rgba(26, 26, 46, 0.8) 0%, rgba(22, 33, 62, 0.8) 50%, rgba(15, 52, 96, 0.8) 100%),
+    url('/fantasy_background.png') center/cover no-repeat fixed;
+  color: #f4f1de;
+  min-height: 100vh;
+}
+
+.fantasy-drawer {
+  width: 80px;
+  background: url('/drawer_book_cover.png') center/cover no-repeat;
+  border-right: 3px solid #8b6f47;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 60px 10px 20px 10px;
+  box-shadow: 4px 0 20px rgba(0, 0, 0, 0.5);
+  z-index: 100;
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+}
+
+.fantasy-drawer-toggle {
+  display: none;
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  width: 50px;
+  height: 50px;
+  background: rgba(101, 67, 33, 0.9);
+  border: 2px solid #d4af37;
+  border-radius: 8px;
+  color: #d4af37;
+  font-size: 24px;
+  cursor: pointer;
+  z-index: 150;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+  transition: all 0.3s ease;
+}
+
+.fantasy-drawer-toggle:hover {
+  background: rgba(139, 111, 71, 0.9);
+  transform: scale(1.05);
+  box-shadow: 0 6px 20px rgba(212, 175, 55, 0.4);
+}
+
+.fantasy-drawer-overlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 99;
+}
+
+.fantasy-drawer-icon {
+  width: 50px;
+  height: 50px;
+  background: rgba(139, 111, 71, 0.4);
+  border: 2px solid #d4af37;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  color: #d4af37;
+  font-size: 22px;
+  box-shadow: 
+    inset 0 2px 4px rgba(0, 0, 0, 0.3),
+    0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.fantasy-drawer-icon:hover {
+  background: rgba(212, 175, 55, 0.3);
+  transform: scale(1.1);
+  box-shadow: 
+    inset 0 2px 4px rgba(0, 0, 0, 0.3),
+    0 4px 12px rgba(212, 175, 55, 0.5);
+}
+
+.fantasy-main-content {
+  margin-left: 80px;
+  padding: 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+
+.fantasy-main-content.no-drawer {
+  margin-left: 0;
+}
+
+.fantasy-main-content.quest-page {
+  background: 
+    linear-gradient(135deg, rgba(26, 26, 46, 0.3) 0%, rgba(22, 33, 62, 0.3) 100%),
+    url('/quest_page_book.png') center/cover no-repeat;
+}
+
+.fantasy-page-title {
+  font-family: 'Cinzel', serif;
+  font-weight: 700;
+  font-size: 3rem;
+  color: #f4a261;
+  text-align: center;
+  margin-bottom: 40px;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+.fantasy-button {
+  background: linear-gradient(45deg, #f4a261 0%, #e76f51 100%);
+  border: 4px solid #8b6f47;
+  border-radius: 50px;
+  color: #1a1a2e;
+  font-family: 'Cinzel', serif;
+  font-weight: 700;
+  font-size: 1.2rem;
+  padding: 15px 30px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  box-shadow: 
+    0 0 0 2px #d4af37,
+    0 6px 20px rgba(0, 0, 0, 0.4),
+    inset 0 2px 4px rgba(255, 255, 255, 0.3),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.2);
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.fantasy-button:hover:not(:disabled) {
+  transform: translateY(-3px);
+  background: linear-gradient(45deg, #e76f51 0%, #f4a261 100%);
+  box-shadow: 
+    0 0 0 2px #d4af37,
+    0 10px 30px rgba(0, 0, 0, 0.5),
+    0 0 20px rgba(212, 175, 55, 0.5),
+    inset 0 2px 4px rgba(255, 255, 255, 0.3),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.fantasy-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: linear-gradient(45deg, #666 0%, #555 100%);
+  border-color: #555;
+  color: #aaa;
+  transform: none;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+}
+
+.fantasy-button.small {
+  font-size: 0.9rem;
+  padding: 8px 16px;
+  border-width: 2px;
+  letter-spacing: 1px;
+}
+
+.fantasy-button.large {
+  font-size: 2rem;
+  padding: 30px 60px;
+  border-width: 5px;
+  letter-spacing: 3px;
+  box-shadow: 
+    0 0 0 3px #d4af37,
+    0 0 0 6px #8b6f47,
+    0 8px 30px rgba(0, 0, 0, 0.5),
+    0 0 40px rgba(212, 175, 55, 0.3),
+    inset 0 3px 6px rgba(255, 255, 255, 0.4),
+    inset 0 -3px 6px rgba(0, 0, 0, 0.3);
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.4);
+}
+
+.fantasy-card {
+  background: rgba(45, 27, 105, 0.8);
+  border: 3px solid #f4a261;
+  border-radius: 15px;
+  padding: 30px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+}
+
+.fantasy-form-group {
+  margin-bottom: 20px;
+}
+
+.fantasy-form-label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: #f4a261;
+}
+
+.fantasy-form-input, .fantasy-form-select {
+  width: 100%;
+  padding: 12px;
+  border: 2px solid #2a9d8f;
+  border-radius: 8px;
+  background: rgba(26, 26, 46, 0.8);
+  color: #f4f1de;
+  font-family: 'Cinzel', serif;
+  font-size: 1rem;
+}
+
+.fantasy-form-input:focus, .fantasy-form-select:focus {
+  outline: none;
+  border-color: #f4a261;
+  box-shadow: 0 0 10px rgba(244, 162, 97, 0.3);
+}
+
+.fantasy-navigation {
+  display: flex;
+  gap: 20px;
+  margin-top: 30px;
+}
+
+/* ReactFlow Styling */
+.react-flow__node {
+  font-family: 'Cinzel', serif !important;
+}
+
+.react-flow__edge {
+  stroke: #f4a261 !important;
+  stroke-width: 2px !important;
+}
+
+.react-flow__controls {
+  background: rgba(45, 27, 105, 0.8) !important;
+  border: 2px solid #f4a261 !important;
+  border-radius: 8px !important;
+}
+
+.react-flow__controls button {
+  background: rgba(42, 157, 143, 0.8) !important;
+  border: 1px solid #f4a261 !important;
+  color: #f4f1de !important;
+}
+
+.react-flow__controls button:hover {
+  background: rgba(244, 162, 97, 0.8) !important;
+  color: #264653 !important;
+}
+
+/* Message text styling - handwritten style font */
+.fantasy-message-text {
+  font-family: 'Kalam', cursive;
+  text-transform: none;
+  letter-spacing: normal;
+  line-height: 1.6;
+  font-size: 1rem;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .fantasy-drawer {
+    position: fixed;
+    left: -100%;
+    transition: left 0.3s ease;
+  }
+  
+  .fantasy-drawer.open {
+    left: 0;
+  }
+  
+  .fantasy-drawer-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  .fantasy-drawer-overlay {
+    display: block;
+  }
+  
+  .fantasy-main-content {
+    margin-left: 0;
+    padding: 15px;
+  }
+  
+  .fantasy-page-title {
+    font-size: 1.8rem;
+  }
+  
+  .fantasy-button.large {
+    font-size: 1.3rem;
+    padding: 18px 35px;
+  }
+}

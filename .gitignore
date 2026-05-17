@@ -3,10 +3,14 @@
 *build/
 *out/
 *.class
+dist
+dist-ssr
+coverage
 
 # IDE
 .idea/
-.vscode/
+.vscode/*
+!.vscode/extensions.json
 *.iml
 *.ipr
 *.iws
@@ -15,10 +19,14 @@
 .classpath
 .project
 .factorypath
-*.swp
+*.sw?
 *~
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
 
-# IDE/tools
+# IDE / agent tools
 .playwright-mcp/
 .claude/
 .omc/
@@ -47,9 +55,23 @@ gradle-app.setting
 !gradle-wrapper.jar
 .gradletasknamecache
 
+# Node / Vite
+node_modules
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Amplify
+.amplify
+amplify_outputs*
+amplifyconfiguration*
+
 # Logs
-*.log
 logs/
+*.log
 
 # OS files
 .DS_Store
@@ -74,7 +96,7 @@ replay_pid*
 # Spring Boot
 *.pid
 
-# Environment/secrets
+# Environment / secrets
 .env
 .env.local
 *.env

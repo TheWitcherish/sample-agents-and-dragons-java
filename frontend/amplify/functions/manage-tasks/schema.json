@@ -1,0 +1,70 @@
+[
+    {
+        "name": "create_task",
+        "description": "Creates a new task. Tasks are used to track the activities done to achieve a project.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "the name of the task"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "precise description of the task, should include relevant details of what needs to be done and how"
+                },
+                "createdBy": {
+                    "type": "string",
+                    "description": "the id of the agent that creates the task"
+                },
+                "assignee": {
+                    "type": "string",
+                    "description": "the id of the agent assigned to the task, can be identical to 'createdBy' field if the task is auto-assigned"
+                },
+                "projectId": {
+                    "type": "string",
+                    "description": "the id of the project if available, if not the tool will try to infer the project from the environment"
+                }
+            },
+            "required": ["name","description", "createdBy", "assignee" ]
+        }
+    },                    
+    {
+        "name": "update_task",
+        "description": "Updates a task. Task updates are used to track activity relative to task achievement",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "taskId": {
+                    "type": "string"
+                },
+                "newStatus": {
+                    "type": "string",
+                    "description": "the new status of the task, can only take the values : 'CREATED', 'IN_PROGRESS', 'COMPLETED','ABORTED','ON_ERROR'"
+                },
+                "newComment": {
+                    "type": "string",
+                    "description": "precise description of the task update, should include relevant details of what was done and how"
+                },
+                "updatedBy": {
+                    "type": "string",
+                    "description": "the id of the agent that updates the task"
+                }
+            },
+            "required": ["taskId", "newStatus", "newComment", "updatedBy"]
+        }
+    },                    
+    {
+        "name": "read_task",
+        "description": "Reads a task. Helpful to find all needed information to accomplish the task.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "taskId": {
+                    "type": "string"
+                }
+            },
+            "required": ["taskId"]
+        }
+    }
+]
