@@ -1,30 +1,26 @@
 {
   "project": {
     "id": "demo-mono-001",
-    "questId": "quest-mono",
-    "name": "Witcher contract — explain monsters",
-    "prompt": "Briefly explain what a noonwraith is and one practical way a witcher can defeat it. Keep it under 120 words."
+    "questId": "quest-web-paint",
+    "name": "Web Paint",
+    "prompt": "Create a single-file web Paint application running in the browser. It must be usable on a touchscreen smartphone or tablet. The user can pick a color, choose a pen style and thickness, draw on a canvas, and save their drawing. Deliver one self-contained `index.html` containing the HTML, CSS, and JavaScript."
   },
   "team": {
-    "name": "Solo Witcher",
-    "prompt": "Stay grounded — answer like a seasoned witcher giving advice at the inn.",
+    "name": "Solo Builder",
+    "prompt": "Ship something playable. Keep the code small but real.",
     "pattern": "mono",
-    "entrypoint": "agent-geralt",
+    "entrypoint": "agent-builder",
     "agents": [
       {
-        "id": "agent-geralt",
-        "name": "Geralt of Rivia",
+        "id": "agent-builder",
+        "name": "Solo Frontend Builder",
         "model": "us.anthropic.claude-sonnet-4-6",
-        "prompt": "You are Geralt of Rivia, a senior witcher with deep knowledge of the bestiary. Reply in plain prose, no headers, no lists.",
-        "role": "monster-hunter",
+        "prompt": "You are a senior front-end engineer. You design and implement small, runnable browser apps in a single self-contained `index.html` (HTML + CSS + JavaScript, no external dependencies, touch-friendly). When asked to build something, plan briefly, then write the full document, then call writeResult.",
+        "role": "frontend implementation",
         "tools": []
       }
     ],
     "connections": []
   },
-  "config": {
-    "gatewayUrl": "",
-    "token": "",
-    "s3BucketName": ""
-  }
+  "config": { "gateway_url": "", "token": "", "s3_bucket_name": "" }
 }

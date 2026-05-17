@@ -6,7 +6,6 @@ import com.witcherish.samples.agents.api.dto.Project;
 import com.witcherish.samples.agents.api.dto.Team;
 import com.witcherish.samples.agents.core.AgentFactory;
 import com.witcherish.samples.agents.tools.TaskTools;
-import com.witcherish.samples.agents.tools.WriteResultTool;
 import com.witcherish.samples.agents.tools.WriteResultToolFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,9 +15,13 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * Pattern 1.1 — Basic Reasoning.
- * One agent (the entrypoint) receives the prompt and returns a single answer.
- * No delegation, no handoff, no DAG. Foundation block; all other patterns build on this.
+ * Pattern 1.1 — Basic Reasoning. One agent, one prompt, one deliverable.
+ *
+ * <p>The lone agent owns the whole goal: design + implement + ship. It has the same
+ * {@code writeResult} tool the Orchestrator's specialists have, so its output is a
+ * runnable {@code index.html} (S3 or local file), not just prose. This makes Mono an
+ * honest live-demo of Strands' "every agent ships a result" doctrine on the simplest
+ * topology.
  */
 @Component
 public class MonoPattern {
@@ -29,7 +32,8 @@ public class MonoPattern {
     private final TaskTools taskTools;
     private final WriteResultToolFactory writeResultToolFactory;
 
-    public MonoPattern(AgentFactory factory, TaskTools taskTools, WriteResultToolFactory writeResultToolFactory) {
+    public MonoPattern(AgentFactory factory, TaskTools taskTools,
+                       WriteResultToolFactory writeResultToolFactory) {
         this.factory = factory;
         this.taskTools = taskTools;
         this.writeResultToolFactory = writeResultToolFactory;
@@ -42,15 +46,18 @@ public class MonoPattern {
                 .orElseThrow(() -> new IllegalArgumentException(
                         "entrypoint agent " + team.entrypoint() + " not found in team.agents"));
 
-        WriteResultTool writeResult = writeResultToolFactory.build(project, config);
+        var writeResult = writeResultToolFactory.build(project, config).asToolCallback();
         ChatClient agent = factory.buildOne(def, project,
                 List.of(taskTools),
-                List.of(writeResult.asToolCallback()));
+                List.of(writeResult));
 
-        String userPrompt = Prompts.composeUserPrompt(project, team);
         log.info("[mono] invoking entrypoint={} ({})", def.name(), def.id());
 
-        String answer = agent.prompt().user(userPrompt).call().content();
+        String answer = agent.prompt()
+                .user(Prompts.composeMonoPrompt(project, team))
+                .call()
+                .content();
+
         return new PatternResult("COMPLETED", "mono", def.id(), answer, List.of(def.id()));
     }
 }
