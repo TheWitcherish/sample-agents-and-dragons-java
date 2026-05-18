@@ -7,8 +7,7 @@ import { verifyOwner } from './functions/verify-owner/resource';
 import { manageTasks } from './functions/manage-tasks/ressource';
 import { invokeAgentRuntime } from './functions/invoke-agent-runtime/resource';
 import { MCPGateway } from './agentcore/MCPGateway';
-// AgentCore Runtime container deploy is wired in Step 12 (Java AgentCore deployment).
-// import { AgentCoreRuntime } from './agentcore/DirectToAgentCoreRuntime'
+import { AgentCoreRuntime } from './agentcore/DirectToAgentCoreRuntime';
 import { AgentCoreRuntimeRole } from './agentcore/AgentCoreRuntimeRole';
 
 import { NonRegTestRole } from './agentcore/NonRegTestRole';
@@ -63,10 +62,23 @@ const mcpGateway = new MCPGateway(gatewayStack, 'MCPGateway', {
   description: "MCP Gateway for Agents and Dragons"
 })
 
-// IAM role the AgentCore Runtime container will assume. Created now so the role ARN
-// is available the moment Step 12 wires the Java container build.
+// IAM role the AgentCore Runtime container assumes. Grants Bedrock model access +
+// invoke permission on the manage-tasks Lambda (used by the Python agent's MCP tools)
+// + read/write on the storage bucket (where deliverables go).
 const agentCoreRuntimeRole = new AgentCoreRuntimeRole(gatewayStack, 'AgentCoreRuntimeRole', {agentName: 'agent', lambdaFunctionArn: backend.manageTasks.resources.lambda.functionArn});
 backend.storage.resources.bucket.grantReadWrite(agentCoreRuntimeRole.runtimeRole);
+
+// Strands Python AgentCore Runtime — the original demo's agent backend, deployed as a
+// Bedrock AgentCore container. Sources live at <repo>/strands-python-runtime/. The
+// frontend's "Lambda → AgentCore" branch resolves to this runtime ARN via the
+// AgentsPatternRuntime DynamoDB table (admin-seeded; see README).
+const agentCoreRuntime = new AgentCoreRuntime(gatewayStack, 'AgentCoreRuntime', {
+  artifactId: backend.stack.artifactId,
+  agentName: 'auto_agent',
+  agentSourcePath: '../strands-python-runtime',
+  agentRoleArn: agentCoreRuntimeRole.runtimeRole.roleArn,
+  awsRegion: process.env.CDK_DEFAULT_REGION ?? 'us-east-1',
+});
 
 // Non-regression test role (used by staging postBuild)
 const nonRegTestRole = new NonRegTestRole(gatewayStack, 'NonRegTestRole', {
@@ -87,9 +99,12 @@ backend.addOutput({
     agentCoreRuntimeFunction: backend.invokeAgentRuntime.resources.lambda.functionName,
     // The runtime call defaults to the Lambda branch; readers should set
     // VITE_LOCAL_BACKEND_URL to point at the local Java backend during development,
-    // or seed AgentsPatternRuntime once a Java AgentCore Runtime is published (Step 12).
+    // or rely on the Python runtime ARN below (auto-deployed) once seeded into
+    // AgentsPatternRuntime.
     useAgentCoreRuntimeFunction: true,
     nonRegTestRoleArn: nonRegTestRole.role.roleArn,
+    agentCoreRuntimeArn: agentCoreRuntime.runtime.attrAgentRuntimeArn,
+    agentCoreRuntimeName: agentCoreRuntime.runtime.agentRuntimeName,
   },
 });
 
