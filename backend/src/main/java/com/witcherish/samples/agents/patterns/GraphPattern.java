@@ -1,18 +1,170 @@
 package com.witcherish.samples.agents.patterns;
 
+import com.witcherish.samples.agents.api.dto.AgentConnection;
+import com.witcherish.samples.agents.api.dto.AgentDefinition;
 import com.witcherish.samples.agents.api.dto.Config;
 import com.witcherish.samples.agents.api.dto.Project;
 import com.witcherish.samples.agents.api.dto.Team;
+import com.witcherish.samples.agents.core.AgentFactory;
+import com.witcherish.samples.agents.tools.TaskTools;
+import com.witcherish.samples.agents.tools.WriteResultToolFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
 /**
- * Pattern 4.1 — Workflow Orchestration (DAG).
- * Filled in at Step 8 / CHECKPOINT 3.
+ * Graph pattern — a deterministic DAG of agents.
+ *
+ * <p>Mirrors the Python {@code GraphBuilder} from {@code strands.multiagent}: each agent
+ * is a node, each {@link AgentConnection} is a directed edge, the team's entrypoint is
+ * the root. Execution is topologically ordered with AND-style fan-in: a node fires only
+ * once <em>every</em> direct predecessor has produced an output. Each node's prompt is
+ * the original task plus a labelled block per upstream output — exactly the input
+ * propagation Strands documents for graphs.
+ *
+ * <p>Differences from {@link OrchestratorPattern}: there the LLM <em>chooses</em> who
+ * runs next; here the <em>topology</em> chooses. That makes Graph the right primitive
+ * when the workflow is known up front (research → analysis + fact-check → report).
+ *
+ * @see <a href="https://strandsagents.com/docs/user-guide/concepts/multi-agent/graph/">Strands — Graph</a>
  */
 @Component
 public class GraphPattern {
 
+    private static final Logger log = LoggerFactory.getLogger(GraphPattern.class);
+
+    private final AgentFactory factory;
+    private final TaskTools taskTools;
+    private final WriteResultToolFactory writeResultToolFactory;
+
+    public GraphPattern(AgentFactory factory, TaskTools taskTools,
+                        WriteResultToolFactory writeResultToolFactory) {
+        this.factory = factory;
+        this.taskTools = taskTools;
+        this.writeResultToolFactory = writeResultToolFactory;
+    }
+
     public PatternResult run(Project project, Team team, Config config) {
-        throw new UnsupportedOperationException("GraphPattern arrives at Step 8 / CHECKPOINT 3");
+        Map<String, AgentDefinition> defsById = new LinkedHashMap<>();
+        for (AgentDefinition d : team.agents()) {
+            defsById.put(d.id(), d);
+        }
+        if (!defsById.containsKey(team.entrypoint())) {
+            throw new IllegalArgumentException(
+                    "entrypoint agent " + team.entrypoint() + " not found in team.agents");
+        }
+
+        // Adjacency + reverse adjacency, validated against the agent roster.
+        Map<String, Set<String>> outgoing = new LinkedHashMap<>();
+        Map<String, Set<String>> incoming = new LinkedHashMap<>();
+        for (String id : defsById.keySet()) {
+            outgoing.put(id, new LinkedHashSet<>());
+            incoming.put(id, new LinkedHashSet<>());
+        }
+        for (AgentConnection c : team.connections()) {
+            requireAgent(defsById, c.source(), "connection source");
+            requireAgent(defsById, c.target(), "connection target");
+            outgoing.get(c.source()).add(c.target());
+            incoming.get(c.target()).add(c.source());
+        }
+
+        List<String> order = topoSort(defsById.keySet(), outgoing, incoming);
+
+        // Each agent gets the same writeResult + TaskTools surface as the other patterns,
+        // so a node can persist a deliverable when its prompt asks it to.
+        ToolCallback writeResult = writeResultToolFactory.build(project, config).asToolCallback();
+        Map<String, ChatClient> clients = new LinkedHashMap<>();
+        for (AgentDefinition def : defsById.values()) {
+            clients.put(def.id(), factory.buildOne(def, project,
+                    List.of(taskTools), List.of(writeResult)));
+        }
+
+        String task = Prompts.composeUserPrompt(project, team);
+        Map<String, String> outputs = new LinkedHashMap<>();
+        log.info("[graph] order={} entrypoint={}", order, team.entrypoint());
+
+        for (String nodeId : order) {
+            AgentDefinition def = defsById.get(nodeId);
+            String nodePrompt = composeNodePrompt(task, def, incoming.get(nodeId), defsById, outputs);
+            log.info("[graph] running node={} ({}), upstream={}", def.name(), nodeId, incoming.get(nodeId));
+            String reply = clients.get(nodeId).prompt().user(nodePrompt).call().content();
+            outputs.put(nodeId, reply == null ? "" : reply);
+        }
+
+        // Sinks (no outgoing edges) carry the final deliverable. Multiple sinks are
+        // joined in topo order; in practice there's usually one.
+        List<String> sinks = order.stream()
+                .filter(id -> outgoing.get(id).isEmpty())
+                .toList();
+        String finalAnswer = sinks.isEmpty()
+                ? outputs.get(order.get(order.size() - 1))
+                : sinks.stream().map(outputs::get).reduce((a, b) -> a + "\n\n" + b).orElse("");
+
+        return new PatternResult("COMPLETED", "graph", team.entrypoint(), finalAnswer, order);
+    }
+
+    /** Kahn's algorithm. Detects cycles and preserves agent-roster order for deterministic output. */
+    private static List<String> topoSort(Set<String> nodes,
+                                         Map<String, Set<String>> outgoing,
+                                         Map<String, Set<String>> incoming) {
+        Map<String, Integer> indegree = new LinkedHashMap<>();
+        for (String n : nodes) indegree.put(n, incoming.get(n).size());
+
+        Set<String> ready = new LinkedHashSet<>();
+        for (String n : nodes) if (indegree.get(n) == 0) ready.add(n);
+
+        List<String> order = new ArrayList<>(nodes.size());
+        while (!ready.isEmpty()) {
+            String next = ready.iterator().next();
+            ready.remove(next);
+            order.add(next);
+            for (String succ : outgoing.get(next)) {
+                int d = indegree.get(succ) - 1;
+                indegree.put(succ, d);
+                if (d == 0) ready.add(succ);
+            }
+        }
+        if (order.size() != nodes.size()) {
+            throw new IllegalArgumentException("Graph has a cycle — Strands graphs must be acyclic for this runtime.");
+        }
+        return order;
+    }
+
+    /**
+     * Build a node's user prompt. Entry nodes see the original task; dependent nodes
+     * additionally receive each direct predecessor's output, labelled with the agent's
+     * name and role. This is the "input propagation" rule from the Strands graph docs.
+     */
+    private static String composeNodePrompt(String task, AgentDefinition def, Set<String> upstream,
+                                            Map<String, AgentDefinition> defsById,
+                                            Map<String, String> outputs) {
+        if (upstream.isEmpty()) {
+            return task;
+        }
+        StringBuilder sb = new StringBuilder(task);
+        sb.append("\n\nYou are the '").append(def.name()).append("' (").append(def.role())
+          .append(") node in a graph. Use the upstream outputs below to do your part.");
+        for (String src : upstream) {
+            AgentDefinition srcDef = defsById.get(src);
+            sb.append("\n\n--- Output from ").append(srcDef.name())
+              .append(" (").append(srcDef.role()).append(") ---\n")
+              .append(outputs.getOrDefault(src, ""));
+        }
+        return sb.toString();
+    }
+
+    private static void requireAgent(Map<String, AgentDefinition> defs, String id, String label) {
+        if (!defs.containsKey(id)) {
+            throw new IllegalArgumentException(label + " '" + id + "' not in team.agents");
+        }
     }
 }
