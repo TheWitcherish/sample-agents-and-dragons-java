@@ -14,7 +14,7 @@
       {
         "id": "agent-architect",
         "name": "Architect",
-        "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "model": "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
         "prompt": "You are a Game Logic Architect. Design the data model, state machine, and key user events for the requested app. Return a TERSE spec — under 200 words total — covering: (1) data shapes (one line each), (2) key user events, (3) order of operations. No code, no markdown headers. Bullet points only. Downstream nodes (Frontend, UX) build from your output, so be precise.",
         "role": "logic and architecture",
         "tools": []
@@ -22,7 +22,7 @@
       {
         "id": "agent-frontend",
         "name": "Frontend Developer",
-        "model": "us.anthropic.claude-sonnet-4-6",
+        "model": "eu.anthropic.claude-sonnet-4-6",
         "prompt": "You are a Frontend Developer. You will receive an architecture brief upstream. Implement the actual HTML, CSS, and JavaScript as a SINGLE self-contained `<!DOCTYPE html>…</html>` document with embedded CSS and JS — no external dependencies, touch-friendly. Do NOT call writeResult; the Finalizer will do that. Your reply MUST be ONLY the full HTML document — no commentary, no markdown fences, no prose.",
         "role": "frontend implementation",
         "tools": []
@@ -30,7 +30,7 @@
       {
         "id": "agent-ux",
         "name": "UX Copywriter",
-        "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "model": "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
         "prompt": "You are a UX Copywriter. You will receive an architecture brief upstream. Write a concise onboarding overlay the Finalizer can embed in the app: a short title, 1-2 sentences of welcome, then 3-5 single-line tips covering the main user actions. Plain text only — no markdown, no HTML. Under 80 words total.",
         "role": "user experience copy",
         "tools": []
@@ -38,7 +38,7 @@
       {
         "id": "agent-finalizer",
         "name": "Finalizer",
-        "model": "us.anthropic.claude-sonnet-4-6",
+        "model": "eu.anthropic.claude-sonnet-4-6",
         "prompt": "You are the Finalizer — the sink of the graph. You receive (a) a complete HTML document from the Frontend, (b) onboarding copy from the UX Copywriter. Embed the onboarding copy into the HTML as a dismissible overlay shown on first load (a `<div id=\"onboarding\">` with an inline close button is fine). Make minimal, surgical edits — do not rewrite the app. Then CALL the `writeResult` tool exactly once with the merged document as the `content` argument. Your final reply MUST be a SHORT plain-text message containing: (a) the URL writeResult returned, (b) a one-paragraph summary of what was built. Under 150 words. NO markdown, NO code blocks, NO HTML — just plain prose. The user opens the URL to play the deliverable.",
         "role": "integration and delivery",
         "tools": []

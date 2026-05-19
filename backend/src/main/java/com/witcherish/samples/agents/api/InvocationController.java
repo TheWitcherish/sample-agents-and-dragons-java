@@ -18,7 +18,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.List;
 import java.util.regex.Pattern;
 
@@ -78,17 +77,20 @@ public class InvocationController {
     }
 
     /**
-     * Look for a write_result-produced index.html for this project under
-     * {@code target/runs/<projectId>/index.html}. Used by the recovery path above.
-     * S3 deliverables aren't checked here — if the run went to S3, success was already
-     * reported via the orchestrator's tool result and shouldn't reach this fallback.
+     * Look for a write_result-produced index.html under the local runs root for this
+     * project. Used by the recovery path above. The runs root is whatever
+     * {@link com.witcherish.samples.agents.tools.WriteResultTool#localRunsRoot()}
+     * resolves to — usually {@code target/runs}, or {@code SAD_LOCAL_RUNS_DIR}
+     * (e.g. {@code /tmp/runs}) when the cwd isn't writable. S3 deliverables aren't
+     * checked here.
      */
     private static final Pattern PROJECT_ID_SAFE = Pattern.compile("[a-zA-Z0-9_.-]+");
     private static String findLocalDeliverable(String projectId) {
         if (projectId == null || !PROJECT_ID_SAFE.matcher(projectId).matches()) {
             return null;
         }
-        Path file = Paths.get("target", "runs", projectId, "index.html");
+        Path file = com.witcherish.samples.agents.tools.WriteResultTool.localRunsRoot()
+                .resolve(projectId).resolve("index.html");
         if (Files.exists(file)) {
             return file.toAbsolutePath().toUri().toString();
         }

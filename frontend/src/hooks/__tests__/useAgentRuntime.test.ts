@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { useAgentRuntime } from '../useAgentRuntime';
 import type { Project } from '../../types';
@@ -258,6 +258,109 @@ describe('useAgentRuntime', () => {
       expect(response.success).toBe(true);
       // Lambda was called with payload containing only 1 agent (null filtered out)
       expect(mockLambdaSend).toHaveBeenCalled();
+    });
+  });
+
+  // --- Local backend branch: Java OR Python via VITE_LOCAL_BACKEND_URL ---
+  // Covers the live-demo toggle: same /invocations path against either backend.
+  describe('invokeAgentRuntime → local backend', () => {
+    const mockProject: Project = {
+      id: 'proj-local',
+      name: 'Local Project',
+      prompt: 'Build something',
+      teamPattern: 'mono',
+      teamEntrypoint: 'agent-1',
+      teamName: 'Local Team',
+      teamPrompt: '',
+      ownerKey: 'owner-1',
+      questId: 'quest-1',
+      agents: ['agent-1'],
+      agentsConnections: [],
+      status: 'CREATED',
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: '2024-01-01T00:00:00Z',
+    };
+
+    let originalFetch: typeof globalThis.fetch;
+
+    beforeEach(() => {
+      originalFetch = globalThis.fetch;
+      vi.stubEnv('VITE_LOCAL_BACKEND_URL', '/local-runtime');
+      mockAgentGet.mockResolvedValue({
+        data: {
+          id: 'agent-1', name: 'Agent One', model: 'eu.anthropic.claude-sonnet-4-6',
+          prompt: 'Be helpful', role: 'coder', tools: [],
+        },
+      });
+      mockProjectUpdate.mockResolvedValue({ data: { id: 'proj-local' } });
+    });
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+      vi.unstubAllEnvs();
+    });
+
+    it('POSTs to /local-runtime/invocations (Java response: COMPLETED)', async () => {
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          status: 'COMPLETED', pattern: 'mono', entrypointAgentId: 'agent-1',
+          finalAnswer: 'file:///tmp/runs/proj-local/index.html',
+          participatingAgentIds: ['agent-1'],
+        }),
+      } as Response);
+      globalThis.fetch = fetchSpy;
+
+      const { result } = renderHook(() => useAgentRuntime());
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      const response = await result.current.invokeAgentRuntime(mockProject);
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        '/local-runtime/invocations',
+        expect.objectContaining({ method: 'POST' }),
+      );
+      const headers = fetchSpy.mock.calls[0][1].headers;
+      expect(headers['Content-Type']).toBe('application/json');
+      // AgentCore session-id header must be at least 33 chars
+      expect(headers['X-Amzn-Bedrock-AgentCore-Runtime-Session-Id'].length).toBeGreaterThanOrEqual(33);
+      expect(response.success).toBe(true);
+      expect(mockProjectUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'COMPLETED', url: 'file:///tmp/runs/proj-local/index.html' }),
+        expect.anything(),
+      );
+    });
+
+    it('POSTs to /local-runtime/invocations (Python response: started)', async () => {
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ status: 'started', details: { agentCreated: 1 } }),
+      } as Response);
+      globalThis.fetch = fetchSpy;
+
+      const { result } = renderHook(() => useAgentRuntime());
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      const response = await result.current.invokeAgentRuntime(mockProject);
+
+      expect(fetchSpy).toHaveBeenCalledWith('/local-runtime/invocations', expect.anything());
+      expect(response.success).toBe(true);
+      // Python is fire-and-forget — UI awaits the AppSync subscription, so we
+      // mark IN_PROGRESS, not COMPLETED.
+      expect(mockProjectUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'IN_PROGRESS', url: '' }),
+        expect.anything(),
+      );
+    });
+
+    it('throws with the body text when local backend returns non-OK', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false, status: 500, text: () => Promise.resolve('boom'),
+      } as Response);
+
+      const { result } = renderHook(() => useAgentRuntime());
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      await expect(result.current.invokeAgentRuntime(mockProject))
+        .rejects.toThrow(/HTTP 500.*boom/);
     });
   });
 });

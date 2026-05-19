@@ -94,12 +94,27 @@ export const useAgentRuntime = (agentRuntimeId?: string) => {
         return data.filter(a => a !== null);
       };
 
-      // ─── Local Java backend (sample-agents-and-dragons) ─────────────────────
-      // Set VITE_LOCAL_BACKEND_URL=http://localhost:8080 to skip the deployed
-      // AgentCore Runtime entirely and POST the payload to the Spring Boot app.
+      // ─── Local backend (Java OR Python) ─────────────────────────────────────
+      // Set VITE_LOCAL_BACKEND_URL=/local-runtime to use Vite's dev-server proxy
+      // (configured in vite.config.ts) — that forwards /local-runtime/* to whichever
+      // backend is running on localhost:8080. Both sample-agents-and-dragons (Java
+      // + Spring AI) and strands-python-runtime (Python + Strands + bedrock-agentcore)
+      // serve /invocations on 8080 with the same RequestPayload schema, so swapping
+      // backends mid-demo is just: stop one, start the other, hit the UI again.
+      //
+      // The proxy detour is what lets us hit the Python backend from the browser:
+      // Python's BedrockAgentCoreApp has no CORS middleware (it expects to live
+      // behind AgentCore Runtime / API Gateway in prod). Same-origin calls via Vite
+      // sidestep the issue entirely.
+      //
+      // Response shapes differ by design:
+      //   Java   → PatternResult { status, finalAnswer, ... }     (synchronous)
+      //   Python → { status: "started", details: { ... } }        (fire-and-forget)
+      // The UI tracks completion via the AppSync subscription on Project, so we
+      // always mark IN_PROGRESS unless Java returned COMPLETED inline.
       const localBackendUrl = import.meta.env.VITE_LOCAL_BACKEND_URL;
       if (localBackendUrl) {
-        console.debug("invokeAgentRuntime via local Java backend at", localBackendUrl);
+        console.debug("invokeAgentRuntime via local backend at", localBackendUrl);
         const localAgents = await loadAgents();
         const localPayload: ProjectRequestPayload = {
           project: {
@@ -118,24 +133,28 @@ export const useAgentRuntime = (agentRuntimeId?: string) => {
           },
           config: { gateway_url: '', token: '', s3_bucket_name: '' }
         };
-        const response = await fetch(`${localBackendUrl}/run`, {
+        const response = await fetch(`${localBackendUrl}/invocations`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            // Both backends expect the AgentCore session-id header (33+ chars).
+            'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id': `local-${project.id}-${Date.now()}-pad-to-33-bytes`,
+          },
           body: JSON.stringify(localPayload),
         });
         if (!response.ok) {
           throw new Error(`Local backend ${localBackendUrl} returned HTTP ${response.status}: ${await response.text()}`);
         }
         const body = await response.json();
-        // Persist sessionId-equivalent so the UI knows the run started
+        const isJavaCompleted = body.status === 'COMPLETED';
         await dataClient.models.Project.update({
           id: project.id,
           sessionId: `local-${Date.now()}`,
-          status: body.status === 'COMPLETED' ? 'COMPLETED' : 'IN_PROGRESS',
+          status: isJavaCompleted ? 'COMPLETED' : 'IN_PROGRESS',
           url: body.finalAnswer || '',
         } as Parameters<typeof dataClient.models.Project.update>[0], { authMode: 'userPool' });
         return {
-          success: body.status === 'COMPLETED',
+          success: true,
           response: body,
           pattern: project.teamPattern,
         };

@@ -150,7 +150,7 @@ public class WriteResultTool {
 
     private String writeLocal(String content) {
         try {
-            Path dir = Paths.get("target", "runs", projectId);
+            Path dir = localRunsRoot().resolve(projectId);
             Files.createDirectories(dir);
             Path file = dir.resolve("index.html");
             Files.writeString(file, content);
@@ -161,6 +161,18 @@ public class WriteResultTool {
             log.error("write_result local fallback failed", e);
             return "Error writing deliverable locally: " + e.getMessage();
         }
+    }
+
+    /**
+     * Where to put deliverables when no S3 bucket is configured.
+     * <p>Defaults to {@code target/runs} (works during local Maven dev). Override via
+     * {@code SAD_LOCAL_RUNS_DIR} for environments where the JVM cwd is read-only —
+     * e.g. AgentCore Runtime, where the container runs from {@code /app} but only
+     * {@code /tmp} is writable for the non-root spring user.
+     */
+    public static Path localRunsRoot() {
+        String env = System.getenv("SAD_LOCAL_RUNS_DIR");
+        return (env == null || env.isBlank()) ? Paths.get("target", "runs") : Paths.get(env);
     }
 
     private String writeToS3(String content) {

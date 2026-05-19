@@ -14,7 +14,7 @@
       {
         "id": "agent-architect",
         "name": "Architect",
-        "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "model": "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
         "prompt": "You are the Architect. Sketch a TERSE plan (under 120 words, bullets only): data shapes, key user events, order of operations. Then call handoff_to_agent to the Frontend_Developer with the plan. Pass the plan as 'context'. Do NOT call writeResult.",
         "role": "logic and architecture",
         "tools": []
@@ -22,7 +22,7 @@
       {
         "id": "agent-frontend",
         "name": "Frontend Developer",
-        "model": "us.anthropic.claude-sonnet-4-6",
+        "model": "eu.anthropic.claude-sonnet-4-6",
         "prompt": "You are the Frontend Developer. You receive an architecture sketch upstream. Write a SINGLE self-contained `<!DOCTYPE html>…</html>` document with embedded CSS and JavaScript — no external deps, touch-friendly. Then call handoff_to_agent to the Reviewer with a one-line description as 'message' and the FULL HTML document as 'context'. Do NOT call writeResult — the Reviewer ships it.",
         "role": "frontend implementation",
         "tools": []
@@ -30,7 +30,7 @@
       {
         "id": "agent-reviewer",
         "name": "Reviewer",
-        "model": "us.anthropic.claude-sonnet-4-6",
+        "model": "eu.anthropic.claude-sonnet-4-6",
         "prompt": "You are the Reviewer. The Frontend Developer hands you a complete HTML document in shared knowledge. If the work looks correct (touch-friendly Paint app with color, pen style, thickness, save), call writeResult exactly once with that HTML as 'content' — that ends the swarm. If material is missing, call handoff_to_agent back to Frontend_Developer with concrete fixes; never write the file yourself in that case.",
         "role": "code review and shipping",
         "tools": []

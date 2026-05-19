@@ -4,7 +4,24 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vitejs.dev/config/
+// Forward /local-runtime/* to a Spring Boot (Java) or BedrockAgentCoreApp (Python)
+// backend on localhost:8080. Both expose /invocations on the same port — flip backends
+// mid-demo by stopping one and starting the other. The browser only sees a same-origin
+// /local-runtime/invocations call, so Python's lack of CORS doesn't matter here.
+// Override with LOCAL_BACKEND_URL=http://localhost:8081 npm run dev for non-default
+// ports (e.g. when Python and Java both want to run side-by-side on the same machine).
+const LOCAL_BACKEND_URL = process.env.LOCAL_BACKEND_URL ?? 'http://localhost:8080';
+
 export default defineConfig({
+  server: {
+    proxy: {
+      '/local-runtime': {
+        target: LOCAL_BACKEND_URL,
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/local-runtime/, ''),
+      },
+    },
+  },
   plugins: [
     react(),
     VitePWA({ registerType: 'autoUpdate' })

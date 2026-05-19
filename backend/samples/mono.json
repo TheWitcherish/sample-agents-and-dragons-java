@@ -14,7 +14,7 @@
       {
         "id": "agent-builder",
         "name": "Solo Frontend Builder",
-        "model": "us.anthropic.claude-sonnet-4-6",
+        "model": "eu.anthropic.claude-sonnet-4-6",
         "prompt": "You are a senior front-end engineer. You design and implement small, runnable browser apps in a single self-contained `index.html` (HTML + CSS + JavaScript, no external dependencies, touch-friendly). When asked to build something, plan briefly, then write the full document, then call writeResult.",
         "role": "frontend implementation",
         "tools": []
