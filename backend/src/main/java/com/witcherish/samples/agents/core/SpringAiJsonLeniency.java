@@ -5,6 +5,7 @@ import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.model.ModelOptionsUtils;
+import org.springframework.ai.util.json.JsonParser;
 import org.springframework.stereotype.Component;
 
 /**
@@ -18,10 +19,19 @@ import org.springframework.stereotype.Component;
  * shared {@code OBJECT_MAPPER}'s underlying {@code JsonFactory}, making every
  * Spring AI deserialization tolerant of raw control chars inside string values.
  *
- * <p>Why a global tweak instead of per-pattern lenient mappers: the offending parse
- * happens deep inside {@code BedrockProxyChatModel.createRequest} where we have no
- * call site to interpose. Patching the static mapper is the minimal change that
- * keeps the orchestrator + swarm + graph patterns working without forking Spring AI.
+ * <p>Spring AI 1.1.x has <em>two</em> internal Jackson mappers; both need patching:
+ * <ul>
+ *   <li>{@link ModelOptionsUtils#OBJECT_MAPPER} — re-encodes prior {@code tool_use.input}
+ *       blocks during {@code BedrockProxyChatModel.createRequest}.</li>
+ *   <li>{@link JsonParser#getObjectMapper()} — parses the LLM's freshly-emitted
+ *       {@code tool_use.input} JSON inside {@code MethodToolCallback.extractToolArguments}
+ *       when invoking a {@code @Tool}-annotated POJO method.</li>
+ * </ul>
+ *
+ * <p>Why a global tweak instead of per-pattern lenient mappers: the offending parses
+ * happen deep inside Spring AI's machinery where we have no call site to interpose.
+ * Patching the static mappers is the minimal change that keeps the orchestrator,
+ * swarm, and graph patterns working without forking Spring AI.
  *
  * <p>Remove this once Spring AI 2.x exposes a configurable jsonMapper bean and we
  * upgrade — the patched feature will land upstream as a default.
@@ -33,8 +43,10 @@ public class SpringAiJsonLeniency {
 
     @PostConstruct
     void enableLeniency() {
-        ModelOptionsUtils.OBJECT_MAPPER.getFactory()
-                .enable(JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature());
-        log.info("[json-leniency] enabled ALLOW_UNESCAPED_CONTROL_CHARS on Spring AI's ModelOptionsUtils.OBJECT_MAPPER");
+        var feature = JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature();
+        ModelOptionsUtils.OBJECT_MAPPER.getFactory().enable(feature);
+        JsonParser.getObjectMapper().getFactory().enable(feature);
+        log.info("[json-leniency] enabled ALLOW_UNESCAPED_CONTROL_CHARS on Spring AI's "
+                + "ModelOptionsUtils.OBJECT_MAPPER and JsonParser.OBJECT_MAPPER");
     }
 }
