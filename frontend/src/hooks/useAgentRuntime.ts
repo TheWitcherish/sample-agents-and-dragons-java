@@ -94,24 +94,15 @@ export const useAgentRuntime = (agentRuntimeId?: string) => {
         return data.filter(a => a !== null);
       };
 
-      // ─── Local backend (Java OR Python) ─────────────────────────────────────
+      // ─── Local Java backend ─────────────────────────────────────────────────
       // Set VITE_LOCAL_BACKEND_URL=/local-runtime to use Vite's dev-server proxy
-      // (configured in vite.config.ts) — that forwards /local-runtime/* to whichever
-      // backend is running on localhost:8080. Both sample-agents-and-dragons (Java
-      // + Spring AI) and strands-python-runtime (Python + Strands + bedrock-agentcore)
-      // serve /invocations on 8080 with the same RequestPayload schema, so swapping
-      // backends mid-demo is just: stop one, start the other, hit the UI again.
+      // (configured in vite.config.ts) — that forwards /local-runtime/* to the
+      // Spring Boot backend running on localhost:8080.
       //
-      // The proxy detour is what lets us hit the Python backend from the browser:
-      // Python's BedrockAgentCoreApp has no CORS middleware (it expects to live
-      // behind AgentCore Runtime / API Gateway in prod). Same-origin calls via Vite
-      // sidestep the issue entirely.
-      //
-      // Response shapes differ by design:
-      //   Java   → PatternResult { status, finalAnswer, ... }     (synchronous)
-      //   Python → { status: "started", details: { ... } }        (fire-and-forget)
-      // The UI tracks completion via the AppSync subscription on Project, so we
-      // always mark IN_PROGRESS unless Java returned COMPLETED inline.
+      // The Java /invocations endpoint returns PatternResult { status, finalAnswer, ... }
+      // synchronously. The UI also tracks completion via the AppSync subscription on
+      // Project for the deployed AgentCore branch, so we mark IN_PROGRESS unless the
+      // local response came back COMPLETED inline.
       const localBackendUrl = import.meta.env.VITE_LOCAL_BACKEND_URL;
       if (localBackendUrl) {
         console.debug("invokeAgentRuntime via local backend at", localBackendUrl);
@@ -147,11 +138,14 @@ export const useAgentRuntime = (agentRuntimeId?: string) => {
         }
         const body = await response.json();
         const isJavaCompleted = body.status === 'COMPLETED';
+        // Strands-style structured output: prefer body.result.deliverableUrl
+        // (typed) over body.finalAnswer (free-form prose).
+        const deliverableUrl: string = body?.result?.deliverableUrl || '';
         await dataClient.models.Project.update({
           id: project.id,
           sessionId: `local-${Date.now()}`,
           status: isJavaCompleted ? 'COMPLETED' : 'IN_PROGRESS',
-          url: body.finalAnswer || '',
+          url: deliverableUrl,
         } as Parameters<typeof dataClient.models.Project.update>[0], { authMode: 'userPool' });
         return {
           success: true,

@@ -72,7 +72,8 @@ public class InvocationController {
             List<String> participants = payload.team().agents().stream().map(a -> a.id()).toList();
             String message = "Deliverable written to " + url
                     + ". (Note: Spring AI 1.1.3 strict-JSON quirk prevented the orchestrator's final summary turn — the deliverable itself succeeded.)";
-            return new PatternResult("COMPLETED", pattern, entrypointId, message, participants);
+            return new PatternResult("COMPLETED", pattern, entrypointId, message, participants,
+                    com.witcherish.samples.agents.api.dto.QuestResult.ok(message, url));
         }
     }
 

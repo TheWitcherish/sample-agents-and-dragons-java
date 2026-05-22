@@ -6,13 +6,15 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.witcherish.samples.agents.api.dto.AgentDefinition;
 import com.witcherish.samples.agents.api.dto.Config;
 import com.witcherish.samples.agents.api.dto.Project;
+import com.witcherish.samples.agents.api.dto.QuestResult;
 import com.witcherish.samples.agents.api.dto.Team;
 import com.witcherish.samples.agents.core.AgentFactory;
-import com.witcherish.samples.agents.tools.TaskTools;
+import com.witcherish.samples.agents.core.AgentFactory.BuiltAgent;
+import com.witcherish.samples.agents.telemetry.McpTelemetryPublisher.Session;
+import com.witcherish.samples.agents.tools.TaskToolsFactory;
 import com.witcherish.samples.agents.tools.WriteResultToolFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.ai.tool.metadata.ToolMetadata;
@@ -22,6 +24,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Swarm pattern — a peer team of agents that hand off control to each other.
@@ -78,17 +81,20 @@ public class SwarmPattern {
             .build();
 
     private final AgentFactory factory;
-    private final TaskTools taskTools;
+    private final TaskToolsFactory taskToolsFactory;
     private final WriteResultToolFactory writeResultToolFactory;
+    private final StructuredAnswer structuredAnswer;
 
-    public SwarmPattern(AgentFactory factory, TaskTools taskTools,
-                        WriteResultToolFactory writeResultToolFactory) {
+    public SwarmPattern(AgentFactory factory, TaskToolsFactory taskToolsFactory,
+                        WriteResultToolFactory writeResultToolFactory,
+                        StructuredAnswer structuredAnswer) {
         this.factory = factory;
-        this.taskTools = taskTools;
+        this.taskToolsFactory = taskToolsFactory;
         this.writeResultToolFactory = writeResultToolFactory;
+        this.structuredAnswer = structuredAnswer;
     }
 
-    public PatternResult run(Project project, Team team, Config config) {
+    public PatternResult run(Project project, Team team, Config config, Session telemetry) {
         // Index by sanitised name (the only handle the LLM sees in tool descriptions).
         Map<String, AgentDefinition> defsByName = new LinkedHashMap<>();
         for (AgentDefinition d : team.agents()) {
@@ -108,10 +114,13 @@ public class SwarmPattern {
         // never via writeResult. This dodges Spring AI 1.1.3's strict-JSON quirk on
         // re-encoding multi-line tool inputs across turns.
         ToolCallback writeResult = writeResultToolFactory.build(project, config).asToolCallback();
+        var taskTools = taskToolsFactory.build(project.id(), telemetry);
 
-        // Build one ChatClient per agent. Each agent's tool surface = TaskTools, writeResult,
-        // and a per-agent handoff_to_agent tool (Strands injects this automatically).
-        Map<String, ChatClient> clients = new LinkedHashMap<>();
+        // Build one BuiltAgent per agent (ChatClient + advisor). Each agent's tool surface =
+        // TaskTools, writeResult, and a per-agent handoff_to_agent tool (Strands injects
+        // this automatically). The advisor lets us publish per-peer token/cycle counts
+        // when the peer's turn ends.
+        Map<String, BuiltAgent> built = new LinkedHashMap<>();
         for (AgentDefinition def : team.agents()) {
             ToolCallback handoffTool = buildHandoffTool(def, defsByName, handoff);
             // Apply the SINGLE_HANDOFF_INSTRUCTION to the entrypoint, mirroring the Python.
@@ -119,7 +128,7 @@ public class SwarmPattern {
                     ? new AgentDefinition(def.id(), def.name(), def.model(),
                             def.prompt() + SINGLE_HANDOFF_INSTRUCTION, def.role(), def.tools())
                     : def;
-            clients.put(def.id(), factory.buildOne(shaped, project,
+            built.put(def.id(), factory.buildOne(shaped, project,
                     List.of(taskTools), List.of(writeResult, handoffTool)));
         }
 
@@ -136,6 +145,12 @@ public class SwarmPattern {
         log.info("[swarm] entrypoint={} team={}", entrypointDef.name(),
                 team.agents().stream().map(AgentDefinition::name).toList());
 
+        // Pre-mark every peer as READY so the UI shows the whole swarm before turns start.
+        for (AgentDefinition def : team.agents()) {
+            telemetry.saveAgentState(project.id(), def.id(), def.name(), "READY",
+                    0, 0, 0, 0, 0, 0L);
+        }
+
         while (iterations < MAX_ITERATIONS) {
             iterations++;
             nodeHistory.add(current.name());
@@ -144,7 +159,20 @@ public class SwarmPattern {
             log.info("[swarm] iter={} running={} ({})", iterations, current.name(), current.id());
 
             handoff.reset();
-            String reply = clients.get(current.id()).prompt().user(userPrompt).call().content();
+            BuiltAgent peer = built.get(current.id());
+            telemetry.saveAgentState(project.id(), current.id(), current.name(), "WORKING",
+                    peer.advisor().cycleCount(), peer.advisor().messageCount(),
+                    peer.advisor().inputTokens(), peer.advisor().outputTokens(),
+                    peer.advisor().totalTokens(), 0L);
+            long turnStart = System.currentTimeMillis();
+            String reply = peer.client().prompt().user(userPrompt).call().content();
+            long turnElapsed = System.currentTimeMillis() - turnStart;
+
+            telemetry.saveAgentMessage(project.id(), current.id(), "assistant", reply == null ? "" : reply);
+            telemetry.saveAgentState(project.id(), current.id(), current.name(), "STOPPED",
+                    peer.advisor().cycleCount(), peer.advisor().messageCount(),
+                    peer.advisor().inputTokens(), peer.advisor().outputTokens(),
+                    peer.advisor().totalTokens(), turnElapsed);
 
             if (!handoff.requested) {
                 // Agent ended its turn without handing off — its reply is the final answer.
@@ -171,6 +199,7 @@ public class SwarmPattern {
             }
             log.info("[swarm] handoff #{} {} -> {} : {}", handoffCount, current.name(), next.name(),
                     summarize(handoff.message));
+            telemetry.saveAgentTransition(project.id(), UUID.randomUUID().toString(), current.id(), next.id());
 
             pendingMessage = handoff.message;
             current = next;
@@ -186,7 +215,8 @@ public class SwarmPattern {
         List<String> participants = nodeHistory.stream()
                 .map(name -> idByName.getOrDefault(name, name))
                 .toList();
-        return new PatternResult("COMPLETED", "swarm", entrypointDef.id(), finalAnswer, participants);
+        QuestResult structured = structuredAnswer.coerce(finalAnswer);
+        return new PatternResult("COMPLETED", "swarm", entrypointDef.id(), finalAnswer, participants, structured);
     }
 
     /**
@@ -236,7 +266,8 @@ public class SwarmPattern {
                     state.context = context;
                     return "Handoff to " + target + " accepted. Stop now.";
                 } catch (Exception e) {
-                    return "Error parsing handoff_to_agent: " + e.getMessage();
+                    log.error("[swarm] handoff_to_agent parse failed", e);
+                    return "Error parsing handoff_to_agent: " + com.witcherish.samples.agents.observer.Throwables.rootMessage(e);
                 }
             }
         };

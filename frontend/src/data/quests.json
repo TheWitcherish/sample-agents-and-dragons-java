@@ -1,0 +1,79 @@
+[
+  {
+    "name": "Web Paint",
+    "prompt": "Create a web application like paint running in the browser. It muste be usable on smartphone and tablet with touchscreen. you can choose color, pen style and thickness. you are able to save your drawing.",
+    "mandatoryAgentRoles": [],
+    "authorizedAgentList": [],
+    "authorizedPatternList": [],
+    "teamDirectionSamples": [
+      "add some shapes like stars or circle",
+      "create a fancy ui"
+    ]
+  },
+  {
+    "name": "Flappy Pigeon",
+    "prompt": "Build a Flappy Bird-style game in browser based language. Implement gravity, pipes, jumping, scoring, and collision detection. Keep it simple but playable on ipad tablet with small screen and touch screen on a smartphone. polish the Flappy Bird style game: add background images, custom bird and pipe images, sound effects for jump/collision/scoring, smoother animations. Also list the required assets.",
+    "mandatoryAgentRoles": [],
+    "authorizedAgentList": null,
+    "authorizedPatternList": null,
+    "teamDirectionSamples": [
+      "Add parallax scrolling for the background to make the game feel more dynamic",
+      "Create animated sprites for the bird flapping wings during jump and fall"
+    ]
+  },
+  {
+    "name": "Snake",
+    "prompt": "Create a snake-style game. Add levels with different layouts, power-ups (speed boost, invincibility), leaderboard, and smooth animations to the game. Include explosion animations and game over screen. Keep it simple but playable on ipad tablet with small screen and touch screen on a smartphone.",
+    "mandatoryAgentRoles": [],
+    "authorizedAgentList": [],
+    "authorizedPatternList": [],
+    "teamDirectionSamples": [
+      "create a fancy ui",
+      "add sound effects"
+    ]
+  },
+  {
+    "name": "Wordle",
+    "prompt": "Create a daily word guessing game where players have 6 attempts to guess a 5-letter word. Include a touch-friendly keyboard, color-coded feedback tiles (green, yellow, gray), and statistics tracking. Optimize for iPad display and touch interaction. Stay simple",
+    "mandatoryAgentRoles": [],
+    "authorizedAgentList": [],
+    "authorizedPatternList": [],
+    "teamDirectionSamples": [
+      "create a fancy ui and animated background",
+      "add sound effects"
+    ]
+  },
+  {
+    "name": "Solitaire",
+    "prompt": "Create a playable Klondike solitaire card game in a single index.html file with embedded CSS and JavaScript. Make it responsive for iPad and mobile with touch-enabled drag-and-drop. Include 7 tableau piles, 4 foundation piles, stock and waste piles. Use standard solitaire rules and simple card visuals.",
+    "mandatoryAgentRoles": [],
+    "authorizedAgentList": [],
+    "authorizedPatternList": [],
+    "teamDirectionSamples": [
+      "las vegas casino stylized HUD design",
+      "add sound effects reflecting cards slaping"
+    ]
+  },
+  {
+    "name": "Sudoku",
+    "prompt": "Create an iPad-optimized Sudoku web app featuring a touch-friendly 9x9 grid, comfortable number input pad, multiple difficulty levels, and smart hints. Include pencil marks, auto-save, and progress tracking in a clean interface that works seamlessly. Keep it simple but playable on ipad tablet with small screen and touch screen on a smartphone.",
+    "mandatoryAgentRoles": [],
+    "authorizedAgentList": [],
+    "authorizedPatternList": [],
+    "teamDirectionSamples": [
+      "fancy UI"
+    ]
+  },
+  {
+    "name": "Space Invaders",
+    "prompt": "Build a classic Space Invaders game with rows of descending aliens, player spaceship with left/right movement and shooting, shields that degrade when hit, increasing difficulty per wave, score system, and retro pixel art style. Include explosion animations and game over screen. Keep it simple but playable on ipad tablet with small screen and touch screen on a smartphone.",
+    "mandatoryAgentRoles": [],
+    "authorizedAgentList": [],
+    "authorizedPatternList": [],
+    "teamDirectionSamples": [
+      "Authentic retro arcade feel",
+      "Smooth alien movement patterns",
+      "Satisfying explosion effects"
+    ]
+  }
+]

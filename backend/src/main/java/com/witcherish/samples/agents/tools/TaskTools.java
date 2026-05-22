@@ -1,10 +1,10 @@
 package com.witcherish.samples.agents.tools;
 
+import com.witcherish.samples.agents.telemetry.McpTelemetryPublisher.Session;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
-import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -13,7 +13,19 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
-@Component
+/**
+ * In-flight task tracker for a single quest.
+ *
+ * <p>One instance is built per request via {@link TaskToolsFactory#build(String, Session)}
+ * — the {@code projectId} and the per-quest {@link Session} are baked in so each
+ * {@code @Tool} call can both update the local in-memory map (for fast lookup by ids)
+ * and publish to AppSync via the manage-tasks MCP target so the React frontend's
+ * Adventure Log lights up live.
+ *
+ * <p>This mirrors the Python Strands runtime: every task tool call goes through the
+ * AgentCore MCP gateway so the AppSync subscription on the {@code Task} table receives
+ * a push the moment an agent decides to create or update a task.
+ */
 public class TaskTools {
 
     private static final Logger log = LoggerFactory.getLogger(TaskTools.class);
@@ -31,6 +43,13 @@ public class TaskTools {
     ) {}
 
     private final ConcurrentMap<String, TaskRecord> tasks = new ConcurrentHashMap<>();
+    private final String projectId;
+    private final Session telemetry;
+
+    public TaskTools(String projectId, Session telemetry) {
+        this.projectId = projectId;
+        this.telemetry = telemetry == null ? Session.NO_OP : telemetry;
+    }
 
     @Tool(description = "Create a new task. Tasks track activities done to achieve a project. Returns the new task id.")
     public String createTask(
@@ -43,6 +62,8 @@ public class TaskTools {
         Instant now = Instant.now();
         tasks.put(id, new TaskRecord(id, name, description, "CREATED", createdBy, assignee, null, now, now));
         log.info("createTask id={} name={} createdBy={} assignee={}", id, name, createdBy, assignee);
+        // Mirror to AppSync via the manage-tasks MCP target so the Adventure Log animates live.
+        telemetry.createTask(projectId, id, name, description, createdBy, assignee);
         return id;
     }
 
@@ -64,6 +85,7 @@ public class TaskTools {
                 newComment, existing.createdAt(), Instant.now());
         tasks.put(taskId, updated);
         log.info("updateTask id={} newStatus={} updatedBy={}", taskId, newStatus, updatedBy);
+        telemetry.updateTask(taskId, newStatus, newComment, updatedBy);
         return "OK";
     }
 
@@ -77,9 +99,5 @@ public class TaskTools {
 
     public List<TaskRecord> listAll() {
         return new ArrayList<>(tasks.values());
-    }
-
-    public void reset() {
-        tasks.clear();
     }
 }

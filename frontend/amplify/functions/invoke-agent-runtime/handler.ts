@@ -84,7 +84,9 @@ export const handler = async (event: { payload: ProjectRequestPayload }) => {
             agentRuntimeArn,
             runtimeSessionId: `project-${requestPayload.project.id}`,
             payload: payloadStr,
-            qualifier: 'DEFAULT'
+            qualifier: 'DEFAULT',
+            contentType: 'application/json',
+            accept: 'application/json',
         });
 
         console.log(`[INVOKE_COMMAND] Sending command to BedrockAgentCore`);

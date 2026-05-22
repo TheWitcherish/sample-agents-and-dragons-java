@@ -1,23 +1,20 @@
 # sample-agents-and-dragons
 
-**Agents and Dragons** is a hands-on demo of the canonical agentic-AI patterns — **Mono**, **Orchestrator**, **Graph**, **Swarm** — implemented twice over: once in **Java 25 + Spring AI + Spring AI Community AgentCore**, once in **Python + Strands Agents + bedrock-agentcore**. Both back the same React frontend, so during a talk you can flip between them mid-demo and watch the contracts converge.
+**Agents and Dragons** is a hands-on demo of the canonical agentic-AI patterns — **Mono**, **Orchestrator**, **Graph**, **Swarm** — implemented in **Java 25 + Spring AI + Spring AI Community AgentCore**, served behind a React + Amplify Gen 2 frontend. The same Spring Boot app runs locally in Mode A and as a Bedrock AgentCore Runtime container in Mode C — one codebase, one contract, two deployment topologies.
 
 ```
 sample-agents-and-dragons/
 ├── backend/                    # Java 25 + Spring AI + AgentCore (Spring Boot)
-├── strands-python-runtime/     # Python + Strands + bedrock-agentcore (BedrockAgentCoreApp)
-└── frontend/                   # React 18 + Vite + Amplify Gen 2 — works against either backend
+└── frontend/                   # React 18 + Vite + Amplify Gen 2 — talks to local OR deployed backend
 ```
 
 | Tier | Pin |
 |---|---|
 | Java | 25 |
 | Spring Boot | 3.5.14 |
-| Spring AI | 1.1.3 |
+| Spring AI | 1.1.6 |
 | Spring AI AgentCore | 1.0.0 |
-| Python | 3.11+ |
-| Strands Agents | 1.29.0+ |
-| bedrock-agentcore | 1.4.1+ |
+| MCP SDK | `io.modelcontextprotocol.sdk:mcp-core:1.1.0` |
 | Bedrock model (default) | `eu.anthropic.claude-sonnet-4-6` (cross-region inference profile) |
 | AWS region (default) | `eu-central-1` |
 | Frontend | React 18 + Vite + AWS Amplify Gen 2 |
@@ -26,16 +23,14 @@ sample-agents-and-dragons/
 
 ## Run the demo (pick a mode)
 
-All four modes use the **exact same** React frontend on `http://localhost:5173`. Pick the mode that matches what you want the audience to see, then jump to the per-pattern walkthroughs below.
+Both modes use the **exact same** React frontend on `http://localhost:5173`. Pick the mode that matches what you want the audience to see, then jump to the per-pattern walkthroughs below.
 
 | Mode | What the audience sees | When to reach for it |
 |---|---|---|
 | **A — Local Java backend** | Spring Boot + Spring AI talking to Bedrock directly | Show typed Java agent code, advisor pattern, `@Tool` annotations |
-| **B — Local Python backend** | Strands `Swarm`/`Graph` builders running locally | Show how Strands abstracts the same patterns in fewer lines |
 | **C — Deployed Java AgentCore Runtime** | Same Java app, packaged in ARM64 container, registered in AgentCore | Show "this is what I just deployed; it's serving live traffic now" |
-| **D — Deployed Python AgentCore Runtime** | Same Python app, packaged via `npx ampx sandbox` | Show Amplify Gen 2 + AgentCore convergence story |
 
-> **The pedagogical punchline** of swapping A↔B mid-demo: same `/invocations` contract, same RequestPayload, same Bedrock model — language doesn't matter, the **agent contract** does.
+> **The pedagogical punchline** of swapping A↔C mid-demo: same `/invocations` contract, same RequestPayload, same Bedrock model — local laptop or managed AgentCore container, the **agent contract** doesn't change.
 
 ### Mode A — Local Java backend
 
@@ -52,22 +47,6 @@ VITE_LOCAL_BACKEND_URL=/local-runtime npm run dev
 
 Open `http://localhost:5173`, sign in via Cognito, build a Mono team, kick it off.
 
-### Mode B — Local Python backend
-
-```bash
-# Terminal 1 — Python backend (port 8080 — SAME port as Java; only one runs at a time)
-cd strands-python-runtime
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-AWS_REGION=eu-central-1 python agent.py
-
-# Terminal 2 — same frontend command as Mode A
-cd frontend
-VITE_LOCAL_BACKEND_URL=/local-runtime npm run dev
-```
-
-The frontend is identical — Vite's dev-server proxy forwards `/local-runtime/*` to whichever backend owns port 8080. **To switch from Java to Python mid-demo: stop the Java terminal, start the Python terminal, hit refresh in the browser.** No frontend env-var changes.
-
 ### Mode C — Deployed Java AgentCore Runtime
 
 ```bash
@@ -83,16 +62,7 @@ npm run dev
 
 You'll need to seed the `AgentsPatternRuntime` table with the runtime ARN that `deploy.sh` prints — see [Wiring the deployed AgentCore branch](#wiring-the-deployed-agentcore-branch-agentspatternruntime).
 
-### Mode D — Deployed Python AgentCore Runtime
-
-```bash
-cd frontend
-npx ampx sandbox               # provisions Cognito + AppSync + Amplify Gen 2 + AgentCore Python runtime
-unset VITE_LOCAL_BACKEND_URL
-npm run dev
-```
-
-See `strands-python-runtime/SEEDING.md` for the AppSync/DynamoDB seed mutations after the sandbox finishes.
+> The Amplify Gen 2 sandbox (`npx ampx sandbox`) provisions Cognito + AppSync + storage + the `invokeAgentRuntime` Lambda. The Java runtime itself is deployed out-of-band via `backend/deploy.sh` and referenced through the `AgentsPatternRuntime` lookup.
 
 ---
 
@@ -126,7 +96,8 @@ Each pattern ships a ready-to-curl JSON payload in `backend/samples/`. The `/run
 **What the audience watches.**
 - The Coordinator calls `Game_Logic_Architect` (a tool, not a peer), then `Frontend_Developer`, then `Code_Reviewer` — visible in the events stream.
 - The frontend specialist calls `writeResult` directly; the boss only forwards the URL.
-- The recovery message in `finalAnswer` if Spring AI 1.1.3's strict-JSON quirk fires (search for "strict-JSON quirk" in `InvocationController.java` to explain on stream).
+- Each agent card lighting up READY → WORKING → STOPPED with token + cycle counts (Spring AI's `Usage` metadata, surfaced via `EventCaptureAdvisor`).
+- The Adventure Log filling progressively as agents call `createTask` / `updateTask` over MCP — same wire format as their domain tools, but routed to the `manage-tasks` Lambda for AppSync writes.
 
 **Expected timing.** ~90-150 seconds. 3-4 sequential inference rounds, one per specialist.
 
@@ -170,22 +141,52 @@ Each pattern ships a ready-to-curl JSON payload in `backend/samples/`. The `/run
 
 ---
 
+## Live UI from a Java backend (Strands-style telemetry)
+
+The React frontend's agent cards, edges, and Adventure Log are wired to AppSync subscriptions on `AgentRun` / `AgentTransition` / `AgentMessage` / `Task`. Strands' Python runtime fed those tables natively; the Java port reaches them through **the same Bedrock AgentCore MCP Gateway** the agents already use for their domain tools — one protocol, two roles.
+
+```
+Java AgentCore runtime  ──MCP─▶  AgentCore Gateway (CUSTOM_JWT)  ──Lambda─▶  manage-tasks
+   ↑                                                                              │
+   │                                                                              ▼
+ChatClient + EventCaptureAdvisor                                              AppSync (DynamoDB)
+   │                                                                              │
+   └── pattern hooks: saveAgentState / saveAgentTransition / saveAgentMessage     │
+                                                                                  ▼
+                                                      Frontend subscriptions ── live UI
+```
+
+- **`backend/src/main/java/.../telemetry/McpTelemetryPublisher.java`** — per-quest `McpSyncClient` (`io.modelcontextprotocol.sdk:mcp-core`), JWT forwarded as bearer, fire-and-forget. Fails open with a no-op `Session` if the gateway is unreachable.
+- **`backend/src/main/java/.../patterns/PatternDispatcher.java`** — opens one telemetry session per `RequestPayload`; emits `IN_PROGRESS` / `COMPLETED` / `ON_ERROR` for the project.
+- **Each pattern (Mono/Orchestrator/Graph/Swarm)** — emits `READY` → `WORKING` → `STOPPED` per agent + `saveAgentTransition` on edges. `EventCaptureAdvisor` accumulates real token + cycle counts from `ChatResponse.getMetadata().getUsage()`, so cards display actual numbers, not zeros.
+- **`frontend/amplify/functions/manage-tasks/handler.ts`** — Amplify Function exposing `create_task`, `update_task`, `read_task`, `save_agent_state`, `save_agent_transition`, `save_agent_message`, `save_project_state`. Tool schemas live in `manage-tasks/schema.json`; `MCPGateway.ts` registers it as a gateway target named `lambda` (so tools appear on the wire as `lambda___save_agent_state` etc.).
+- **`frontend/src/data/{agents,quests}.json`** — canonical seed data, read by both the Admin "Load Agents" button (`utils/initData.ts`) and the bootstrap `scripts/seed-data.py`.
+
+### Strands-style structured output
+
+Each pattern's free-form final answer is also coerced into a `QuestResult` record (`api/dto/QuestResult.java` — `summary`, `deliverableUrl`, `status`) via Spring AI's `BeanOutputConverter` (`patterns/StructuredAnswer.java`, `.entity(QuestResult.class)`). Frontend reads `body.result.deliverableUrl` directly — no parsing prose for URLs. A regex fallback covers the rare case where the formatter LLM goes off-schema.
+
+---
+
 ## Live-demo tips
 
 **The 90-second rule.** Mono is fast (~60s). Orchestrator/Graph/Swarm are 100-180s — stream them so the audience sees a `BEFORE_MODEL_CALL` line every 30-60 seconds. If you're talking through a quiet patch, narrate the architecture diagram from the per-pattern note above.
 
-**The "show CloudWatch" beat.** When demoing Mode C/D, open the AgentCore log group while the runtime cold-starts. Watch the Spring Boot startup sequence appear in CloudWatch in real time — `Started AgentsApplication in 1.3 seconds` lands like a magic trick.
+**The "show CloudWatch" beat.** When demoing Mode C, open the AgentCore log group while the runtime cold-starts. Watch the Spring Boot startup sequence appear in CloudWatch in real time — `Started AgentsApplication in 1.3 seconds` lands like a magic trick.
 
-**Switching backends mid-demo (the headline moment).**
-1. With Mode A running and a quest in flight, hit Cmd+C in the Java terminal.
-2. `cd ../strands-python-runtime && python agent.py`
-3. Back in the browser, the in-flight quest is gone (the Java process held it in memory), but a *new* quest with the *same* React UI now runs against Strands. Same payload, same model, different runtime.
-4. Land the punchline: **"This is what cross-language agent contracts buy you."**
+**Switching topologies mid-demo (the headline moment).**
+1. With Mode A running and a quest in flight, kill the Java terminal.
+2. In the frontend terminal, `unset VITE_LOCAL_BACKEND_URL && npm run dev` to flip onto the deployed AgentCore Runtime.
+3. Re-run the same quest payload. Same React UI, same RequestPayload, same model — local laptop swapped for a managed AgentCore container.
+4. Land the punchline: **"This is what one well-defined agent contract buys you."**
 
 **Failure-mode demos worth keeping.** The kind that play well on stream:
-- Spring AI 1.1.3's strict-JSON quirk → controller's recovery path returns the deliverable URL anyway. Read the comment block on `InvocationController.runWithDeliverableFallback` aloud — it's a great "how production code earns its scars" moment.
-- AgentCore cold start (~30s on first invocation) → describe what the runtime is doing while the audience waits. CloudWatch tail makes the wait feel productive.
-- Pasting a `us.*` model ID into a JSON when running in `eu-central-1` → instant `ValidationException`. Fix on stream by changing one character.
+- **Spring AI strict-JSON quirk** → when the LLM emits a `tool_use.input` argument with raw newlines, Spring AI's `ModelOptionsUtils.OBJECT_MAPPER` fails to re-encode it on the next turn. We patch this globally at startup in `core/SpringAiJsonLeniency.java` (one `@PostConstruct`, flips `ALLOW_UNESCAPED_CONTROL_CHARS` on the static factory). Read the comment aloud — it's a great "production agentic AI has scars" moment, and it covers all four patterns at once.
+- **AgentCore cold start** (~30s on first invocation) → describe what the runtime is doing while the audience waits. CloudWatch tail makes the wait feel productive.
+- **Region-mismatched model ID** → pasting a `us.*` model ID into a JSON when running in `eu-central-1` gives an instant `ValidationException`. Fix on stream by changing one character. (Both `frontend/scripts/seed-data.py` and `frontend/src/utils/initData.ts` now read from canonical JSON in `frontend/src/data/{agents,quests}.json`, so the fix applies in one place.)
+- **Specialist failure leaking up** → when an orchestrator's specialist tool throws, the orchestrator gets a typed `Error in <agent>: <root-cause>` string. CloudWatch shows the full stack via `log.error("...", e)`. Bedrock SDK debug logs (`logging.level.software.amazon.awssdk.request=DEBUG`) carry the request ID + validation reason for post-mortem.
+
+> Local backend tail in Mode A: `cd backend && AWS_REGION=eu-central-1 mvn spring-boot:run`. The frontend doesn't care which Java process owns port 8080.
 
 ---
 
@@ -193,7 +194,7 @@ Each pattern ships a ready-to-curl JSON payload in `backend/samples/`. The `/run
 
 | Symptom | Likely fix |
 |---|---|
-| Frontend "Local backend /local-runtime returned HTTP 500" | The local backend crashed — tail the terminal where you ran `mvn spring-boot:run` or `python agent.py`. |
+| Frontend "Local backend /local-runtime returned HTTP 500" | The local backend crashed — tail the terminal where you ran `mvn spring-boot:run`. |
 | Frontend never sees a response | Vite proxy isn't forwarding. Confirm `VITE_LOCAL_BACKEND_URL=/local-runtime` and that something is listening on 8080. |
 | `AccessDeniedException` from Bedrock | Enable model access in the AWS console: Bedrock → Model access → request access for Claude Sonnet 4.6 / Haiku 4.5 in `eu-central-1`. |
 | `ValidationException: model id ...` | Use the `eu.…` prefix (e.g. `eu.anthropic.claude-sonnet-4-6`). `us.…` profiles only work from US regions; `global.…` works from anywhere. |
@@ -205,6 +206,12 @@ Each pattern ships a ready-to-curl JSON payload in `backend/samples/`. The `/run
 | `npm ci` fails on Node < 18 | `nvm install 20`. |
 | Port 8080 already in use | One backend is still running. `lsof -i :8080` to find the PID, `kill <pid>`. |
 | `/events` returns 500 | Stale build — `cd backend && mvn clean compile` and restart. |
+| `JsonParseException: Illegal unquoted character ((CTRL-CHAR, code 10))` | Spring AI's `ModelOptionsUtils.OBJECT_MAPPER` re-encoding a stored `tool_use.input` containing raw newlines. Fixed at startup by `core/SpringAiJsonLeniency.java`; if the bug returns, confirm the bean is being instantiated (`grep '\[json-leniency\]' CloudWatch logs`). |
+| Frontend cards stay blank during a run | Java backend isn't reaching the MCP gateway. Confirm `config.gateway_url` and `config.token` in the request payload (frontend computes these from `outputs.custom.gatewayUrl`); CloudWatch should show `[telemetry] MCP session ready at …` at quest start. |
+| `Error in <agent> (<role>): null` in the orchestrator's reply | An older build. Newer code returns a real root-cause via `Throwables.rootMessage(e)` and stack-traces via `log.error("...", e)`. Redeploy. |
+| Agent uses a stale model ID after edit to `seed-data.py` or `initData.ts` | Both files now read from `frontend/src/data/{agents,quests}.json`. Edit the JSON, then either hit the Admin "Load Agents" button (adds rows) or hot-patch DynamoDB rows directly. `npx ampx sandbox` only reseeds when the table is empty. |
+| HTTP 415 from AgentCore (`Content-Type 'application/octet-stream' is not supported`) | `frontend/amplify/functions/invoke-agent-runtime/handler.ts` must set `contentType: 'application/json'` on `InvokeAgentRuntimeCommand`. The default is octet-stream, which Spring MVC rejects. |
+| `s3:PutObject` 403 from the AgentCore exec role | `backend/deploy.sh` auto-resolves the bucket name from `frontend/amplify_outputs.json`. If you ran `deploy.sh` before `npx ampx sandbox`, re-run it once the outputs file exists, or set `S3_BUCKET=<bucket>` explicitly. |
 
 ---
 
@@ -272,39 +279,12 @@ aws bedrock-agentcore invoke-agent-runtime \
 
 ---
 
-## Python backend — full options
-
-```bash
-cd strands-python-runtime
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-
-# Run (port 8080)
-AWS_REGION=eu-central-1 python agent.py
-
-# Override port (BedrockAgentCoreApp respects PORT)
-PORT=8000 AWS_REGION=eu-central-1 python agent.py
-```
-
-The Python runtime is fire-and-forget — `/invocations` returns `{status: "started", details: {agentCreated: N}}` while the agents run in a background task. Track completion via the AppSync subscription on `Project` (the frontend already does this).
-
-For deployment, the Amplify Gen 2 sandbox builds and deploys the Python runtime container automatically:
-
-```bash
-cd frontend
-npx ampx sandbox       # builds + pushes + registers in AgentCore in eu-central-1
-```
-
-After it finishes, seed `AgentsPatternRuntime` per `strands-python-runtime/SEEDING.md`.
-
----
-
 ## Frontend — full options
 
 ```bash
 cd frontend
 npm ci                                                   # one-time
-VITE_LOCAL_BACKEND_URL=/local-runtime npm run dev        # local backend (Java OR Python)
+VITE_LOCAL_BACKEND_URL=/local-runtime npm run dev        # local Java backend
 unset VITE_LOCAL_BACKEND_URL && npm run dev              # deployed AgentCore Runtime
 
 # Build for production
@@ -315,13 +295,13 @@ npm run lint
 npm run test
 ```
 
-The Vite dev server forwards `/local-runtime/*` to `http://localhost:8080` by default. Override the target with `LOCAL_BACKEND_URL=http://localhost:8081 npm run dev` (e.g. when running Java and Python side-by-side on different ports).
+The Vite dev server forwards `/local-runtime/*` to `http://localhost:8080` by default. Override the target with `LOCAL_BACKEND_URL=http://localhost:8081 npm run dev` (e.g. when running the Java backend on a non-standard port).
 
 The runtime call has three branches inside `src/hooks/useAgentRuntime.ts`:
 
 | Mode | Selected by | What it does |
 |---|---|---|
-| **Local backend (Java OR Python)** | `VITE_LOCAL_BACKEND_URL` set (e.g. `/local-runtime`) | `fetch(${url}/invocations)` with the AgentCore session header. Skips `AgentsPatternRuntime` lookup and Cognito SigV4 entirely. |
+| **Local Java backend** | `VITE_LOCAL_BACKEND_URL` set (e.g. `/local-runtime`) | `fetch(${url}/invocations)` with the AgentCore session header. Skips `AgentsPatternRuntime` lookup and Cognito SigV4 entirely. |
 | **Lambda → AgentCore** | `outputs.custom.useAgentCoreRuntimeFunction === true` | Calls the `invokeAgentRuntime` Lambda which then invokes a Bedrock AgentCore Runtime ARN read from `AgentsPatternRuntime`. |
 | **Direct Bedrock AgentCore** | `useAgentCoreRuntimeFunction === false` | Browser calls Bedrock AgentCore directly with SigV4 instead of going through Lambda. |
 
@@ -351,7 +331,7 @@ mutation Seed {
 }
 ```
 
-For the Python sandbox runtime, see `strands-python-runtime/SEEDING.md` (auto-generated with the right ARN per sandbox).
+The Java runtime ARN is also exposed as `outputs.custom.agentCoreRuntimeArn` after `npx ampx sandbox` runs, which is what `frontend/scripts/seed-data.py` uses for idempotent seeding.
 
 ---
 
@@ -373,35 +353,48 @@ sample-agents-and-dragons/
 │       ├── api/
 │       │   ├── InvocationController.java         # /run, /invocations, /events
 │       │   ├── CorsConfig.java                   # localhost:5173
-│       │   └── dto/                              # RequestPayload, Project, Team, …
+│       │   └── dto/                              # RequestPayload, Project, Team, QuestResult, …
 │       ├── core/
-│       │   ├── AgentFactory.java                 # ChatClient per AgentDefinition
-│       │   └── BedrockModels.java                # eu.* defaults
+│       │   ├── AgentFactory.java                 # ChatClient + advisor per AgentDefinition (BuiltAgent)
+│       │   ├── BedrockModels.java                # eu.* / global.* defaults
+│       │   └── SpringAiJsonLeniency.java         # @PostConstruct hot-fix for Spring AI strict-JSON quirk
 │       ├── observer/
 │       │   ├── AgentEvent.java
-│       │   ├── EventLog.java
-│       │   └── EventCaptureAdvisor.java
+│       │   ├── EventLog.java                     # in-memory ring buffer for /events
+│       │   ├── EventCaptureAdvisor.java          # captures tokens + cycle counts from ChatResponse usage
+│       │   └── Throwables.java                   # rootMessage(t) — walk getCause() chain for clean errors
 │       ├── patterns/
-│       │   ├── PatternDispatcher.java
+│       │   ├── PatternDispatcher.java            # opens MCP telemetry Session, dispatches by team.pattern
 │       │   ├── MonoPattern.java                  # Pattern 1.1 — Basic Reasoning
 │       │   ├── OrchestratorPattern.java          # Pattern 4.2 — Agents as Tools
 │       │   ├── GraphPattern.java                 # Pattern 4.1 — Workflow DAG
-│       │   └── SwarmPattern.java                 # Pattern 4.2 — Peer + handoff
+│       │   ├── SwarmPattern.java                 # Pattern 4.2 — Peer + handoff
+│       │   └── StructuredAnswer.java             # Strands-style structured output → QuestResult
+│       ├── telemetry/
+│       │   └── McpTelemetryPublisher.java        # per-quest MCP client → manage-tasks Lambda (live UI feed)
 │       └── tools/
-│           ├── TaskTools.java                    # @Tool create/update/read
+│           ├── TaskTools.java                    # per-quest @Tool create/update/read (mirrors to MCP)
+│           ├── TaskToolsFactory.java             # builds TaskTools bound to the active MCP Session
 │           ├── WriteResultTool.java              # /tmp/runs (container) or target/runs (laptop) or S3
 │           └── WriteResultToolFactory.java
-├── strands-python-runtime/                       # Python + Strands + bedrock-agentcore
-│   ├── agent.py                                  # BedrockAgentCoreApp entrypoint
-│   ├── graph.py                                  # Strands GraphBuilder
-│   ├── swarm.py                                  # Strands Swarm + handoff
-│   ├── hierarchical.py                           # Orchestrator (Agents-as-Tools)
-│   ├── model.py / utils.py / hooks_*.py
-│   └── SEEDING.md                                # AppSync mutations after sandbox deploy
 └── frontend/                                     # React 18 + Vite + Amplify Gen 2
     ├── vite.config.ts                            # /local-runtime/* → :8080 proxy
-    ├── src/hooks/useAgentRuntime.ts              # 3-branch runtime selector
+    ├── src/
+    │   ├── data/                                 # canonical seed data (JSON)
+    │   │   ├── agents.json                       # 18 agent definitions (eu.* / global.* model IDs)
+    │   │   └── quests.json                       # 7 sample quests
+    │   ├── hooks/useAgentRuntime.ts              # 3-branch runtime selector
+    │   ├── pages/ProjectRunPage.tsx              # agent cards + Adventure Log + deliverable URL
+    │   └── utils/initData.ts                     # re-exports agents.json/quests.json for Admin "Load" buttons
+    ├── scripts/
+    │   └── seed-data.py                          # bootstrap: AppSync IAM + reads from src/data/*.json
     ├── amplify/                                  # Amplify Gen 2 backend (auth, data, storage, Lambdas)
+    │   ├── agentcore/
+    │   │   ├── MCPGateway.ts                     # CUSTOM_JWT gateway + Lambda target (manage-tasks)
+    │   │   └── AgentCoreRuntimeRole.ts           # exec role for AgentCore-managed runtimes
+    │   └── functions/manage-tasks/
+    │       ├── handler.ts                        # task CRUD + AgentRun/Message/Transition/Project writes
+    │       └── schema.json                       # canonical tool schema (gateway target reads this at synth)
     └── amplify_outputs.json                      # Pinned to the deployed Amplify environment
 ```
 
@@ -417,3 +410,8 @@ Aligned with the talk-flow:
 - [x] **Step 9 — Swarm** (Pattern 4.2, Peer + handoff) — peer agents with a `handoff_to_agent` tool and a bounded loop.
 - [x] **Step 10 — AgentCore deployment** — multi-stage ARM64 Dockerfile, ECR push, IAM exec role, `bedrock-agentcore-control create-agent-runtime`, read-back from the AgentCore registry.
 - [x] **Step 11 — Live-demo runbook** — this README + per-pattern teaching notes + dual-backend Vite proxy.
+- [x] **Step 12 — Live UI feed via MCP** — Java patterns publish `AgentRun` / `AgentTransition` / `AgentMessage` / `Task` / `Project` updates through the AgentCore MCP Gateway → `manage-tasks` Lambda → AppSync, so the React frontend's agent cards and Adventure Log animate during a run.
+- [x] **Step 13 — Strands-style structured output** — every pattern coerces its final answer into a `QuestResult` record via Spring AI's `BeanOutputConverter`, so the frontend reads `body.result.deliverableUrl` directly instead of parsing prose.
+- [x] **Step 14 — Real token + cycle aggregates** — `EventCaptureAdvisor` reads Spring AI's normalised `Usage` metadata; agent cards show actual prompt/completion/total tokens plus model-call cycle counts.
+- [x] **Step 15 — Production scars patched** — global `SpringAiJsonLeniency` workaround for the strict-JSON re-encoding bug, full-stack error logging via `Throwables.rootMessage(e)` + `log.error("...", e)`, AWS SDK request-level DEBUG logs in CloudWatch.
+- [x] **Step 16 — Canonical seed data** — `frontend/src/data/{agents,quests}.json` is the single source of truth; both the Admin "Load Agents" button (TS) and the `seed-data.py` bootstrap import the same files. Edits stop drifting between consumers.

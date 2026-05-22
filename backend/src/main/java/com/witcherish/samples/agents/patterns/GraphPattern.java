@@ -4,13 +4,15 @@ import com.witcherish.samples.agents.api.dto.AgentConnection;
 import com.witcherish.samples.agents.api.dto.AgentDefinition;
 import com.witcherish.samples.agents.api.dto.Config;
 import com.witcherish.samples.agents.api.dto.Project;
+import com.witcherish.samples.agents.api.dto.QuestResult;
 import com.witcherish.samples.agents.api.dto.Team;
 import com.witcherish.samples.agents.core.AgentFactory;
-import com.witcherish.samples.agents.tools.TaskTools;
+import com.witcherish.samples.agents.core.AgentFactory.BuiltAgent;
+import com.witcherish.samples.agents.telemetry.McpTelemetryPublisher.Session;
+import com.witcherish.samples.agents.tools.TaskToolsFactory;
 import com.witcherish.samples.agents.tools.WriteResultToolFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 
@@ -20,6 +22,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Graph pattern — a deterministic DAG of agents.
@@ -43,17 +46,20 @@ public class GraphPattern {
     private static final Logger log = LoggerFactory.getLogger(GraphPattern.class);
 
     private final AgentFactory factory;
-    private final TaskTools taskTools;
+    private final TaskToolsFactory taskToolsFactory;
     private final WriteResultToolFactory writeResultToolFactory;
+    private final StructuredAnswer structuredAnswer;
 
-    public GraphPattern(AgentFactory factory, TaskTools taskTools,
-                        WriteResultToolFactory writeResultToolFactory) {
+    public GraphPattern(AgentFactory factory, TaskToolsFactory taskToolsFactory,
+                        WriteResultToolFactory writeResultToolFactory,
+                        StructuredAnswer structuredAnswer) {
         this.factory = factory;
-        this.taskTools = taskTools;
+        this.taskToolsFactory = taskToolsFactory;
         this.writeResultToolFactory = writeResultToolFactory;
+        this.structuredAnswer = structuredAnswer;
     }
 
-    public PatternResult run(Project project, Team team, Config config) {
+    public PatternResult run(Project project, Team team, Config config, Session telemetry) {
         Map<String, AgentDefinition> defsById = new LinkedHashMap<>();
         for (AgentDefinition d : team.agents()) {
             defsById.put(d.id(), d);
@@ -80,11 +86,13 @@ public class GraphPattern {
         List<String> order = topoSort(defsById.keySet(), outgoing, incoming);
 
         // Each agent gets the same writeResult + TaskTools surface as the other patterns,
-        // so a node can persist a deliverable when its prompt asks it to.
+        // so a node can persist a deliverable when its prompt asks it to. We keep the
+        // BuiltAgent map so each node's STOPPED telemetry pulls real token/cycle counts.
         ToolCallback writeResult = writeResultToolFactory.build(project, config).asToolCallback();
-        Map<String, ChatClient> clients = new LinkedHashMap<>();
+        var taskTools = taskToolsFactory.build(project.id(), telemetry);
+        Map<String, BuiltAgent> built = new LinkedHashMap<>();
         for (AgentDefinition def : defsById.values()) {
-            clients.put(def.id(), factory.buildOne(def, project,
+            built.put(def.id(), factory.buildOne(def, project,
                     List.of(taskTools), List.of(writeResult)));
         }
 
@@ -92,12 +100,34 @@ public class GraphPattern {
         Map<String, String> outputs = new LinkedHashMap<>();
         log.info("[graph] order={} entrypoint={}", order, team.entrypoint());
 
+        // Pre-mark every agent as READY so the UI renders the full DAG up front.
+        for (AgentDefinition def : defsById.values()) {
+            telemetry.saveAgentState(project.id(), def.id(), def.name(), "READY",
+                    0, 0, 0, 0, 0, 0L);
+        }
+
         for (String nodeId : order) {
             AgentDefinition def = defsById.get(nodeId);
             String nodePrompt = composeNodePrompt(task, def, incoming.get(nodeId), defsById, outputs);
             log.info("[graph] running node={} ({}), upstream={}", def.name(), nodeId, incoming.get(nodeId));
-            String reply = clients.get(nodeId).prompt().user(nodePrompt).call().content();
+
+            // Telemetry: each upstream → this node edge becomes a transition.
+            for (String upstream : incoming.get(nodeId)) {
+                telemetry.saveAgentTransition(project.id(), UUID.randomUUID().toString(), upstream, nodeId);
+            }
+            telemetry.saveAgentState(project.id(), def.id(), def.name(), "WORKING",
+                    0, 0, 0, 0, 0, 0L);
+
+            long start = System.currentTimeMillis();
+            BuiltAgent node = built.get(nodeId);
+            String reply = node.client().prompt().user(nodePrompt).call().content();
             outputs.put(nodeId, reply == null ? "" : reply);
+
+            telemetry.saveAgentMessage(project.id(), def.id(), "assistant", reply == null ? "" : reply);
+            telemetry.saveAgentState(project.id(), def.id(), def.name(), "STOPPED",
+                    node.advisor().cycleCount(), node.advisor().messageCount(),
+                    node.advisor().inputTokens(), node.advisor().outputTokens(),
+                    node.advisor().totalTokens(), System.currentTimeMillis() - start);
         }
 
         // Sinks (no outgoing edges) carry the final deliverable. Multiple sinks are
@@ -109,7 +139,8 @@ public class GraphPattern {
                 ? outputs.get(order.get(order.size() - 1))
                 : sinks.stream().map(outputs::get).reduce((a, b) -> a + "\n\n" + b).orElse("");
 
-        return new PatternResult("COMPLETED", "graph", team.entrypoint(), finalAnswer, order);
+        QuestResult structured = structuredAnswer.coerce(finalAnswer);
+        return new PatternResult("COMPLETED", "graph", team.entrypoint(), finalAnswer, order, structured);
     }
 
     /** Kahn's algorithm. Detects cycles and preserves agent-roster order for deterministic output. */

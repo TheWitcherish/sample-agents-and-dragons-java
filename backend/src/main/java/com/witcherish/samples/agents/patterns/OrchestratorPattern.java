@@ -6,9 +6,13 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.witcherish.samples.agents.api.dto.AgentDefinition;
 import com.witcherish.samples.agents.api.dto.Config;
 import com.witcherish.samples.agents.api.dto.Project;
+import com.witcherish.samples.agents.api.dto.QuestResult;
 import com.witcherish.samples.agents.api.dto.Team;
 import com.witcherish.samples.agents.core.AgentFactory;
-import com.witcherish.samples.agents.tools.TaskTools;
+import com.witcherish.samples.agents.core.AgentFactory.BuiltAgent;
+import com.witcherish.samples.agents.observer.Throwables;
+import com.witcherish.samples.agents.telemetry.McpTelemetryPublisher.Session;
+import com.witcherish.samples.agents.tools.TaskToolsFactory;
 import com.witcherish.samples.agents.tools.WriteResultToolFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +24,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Orchestrator pattern (a.k.a. "Agents as Tools") — the canonical hierarchical multi-agent
@@ -55,17 +60,20 @@ public class OrchestratorPattern {
             """;
 
     private final AgentFactory factory;
-    private final TaskTools taskTools;
+    private final TaskToolsFactory taskToolsFactory;
     private final WriteResultToolFactory writeResultToolFactory;
+    private final StructuredAnswer structuredAnswer;
 
-    public OrchestratorPattern(AgentFactory factory, TaskTools taskTools,
-                               WriteResultToolFactory writeResultToolFactory) {
+    public OrchestratorPattern(AgentFactory factory, TaskToolsFactory taskToolsFactory,
+                               WriteResultToolFactory writeResultToolFactory,
+                               StructuredAnswer structuredAnswer) {
         this.factory = factory;
-        this.taskTools = taskTools;
+        this.taskToolsFactory = taskToolsFactory;
         this.writeResultToolFactory = writeResultToolFactory;
+        this.structuredAnswer = structuredAnswer;
     }
 
-    public PatternResult run(Project project, Team team, Config config) {
+    public PatternResult run(Project project, Team team, Config config, Session telemetry) {
         AgentDefinition orchestratorDef = team.agents().stream()
                 .filter(a -> a.id().equals(team.entrypoint()))
                 .findFirst()
@@ -80,32 +88,59 @@ public class OrchestratorPattern {
         // same bucket. Specialists call it directly to persist the deliverable.
         ToolCallback writeResult = writeResultToolFactory.build(project, config).asToolCallback();
 
+        // Per-quest TaskTools: shares an in-memory map across all agents in this run,
+        // and mirrors createTask/updateTask to AppSync via MCP for live Adventure Log.
+        var taskTools = taskToolsFactory.build(project.id(), telemetry);
+
         // Wrap each specialist as a tool the orchestrator can call. Specialists get
-        // TaskTools + writeResult; they cannot delegate further.
+        // TaskTools + writeResult; they cannot delegate further. Each specialist's
+        // BuiltAgent (ChatClient + advisor) is captured so we can publish accurate
+        // token/cycle aggregates when the specialist's turn ends.
         List<ToolCallback> specialistTools = specialistDefs.stream()
-                .map(spec -> asTool(spec, factory.buildOne(spec, project,
-                        List.of(taskTools), List.of(writeResult))))
+                .map(spec -> asTool(spec,
+                        factory.buildOne(spec, project, List.of(taskTools), List.of(writeResult)),
+                        project, telemetry, orchestratorDef))
                 .toList();
 
         // The orchestrator gets every specialist tool plus writeResult itself.
         var orchestratorCallbacks = new ArrayList<>(specialistTools);
         orchestratorCallbacks.add(writeResult);
-        ChatClient orchestrator = factory.buildOne(orchestratorDef, project,
+        BuiltAgent orchestratorBuilt = factory.buildOne(orchestratorDef, project,
                 List.of(taskTools), orchestratorCallbacks);
+        ChatClient orchestrator = orchestratorBuilt.client();
 
         log.info("[orchestrator] entrypoint={} specialists={}",
                 orchestratorDef.name(), specialistDefs.size());
 
+        // Mark every team member as READY up front so the UI can render their cards from
+        // the start of the run. Each specialist's WORKING transition is emitted when the
+        // orchestrator actually calls its tool (see asTool below).
+        telemetry.saveAgentState(project.id(), orchestratorDef.id(), orchestratorDef.name(), "WORKING",
+                0, 0, 0, 0, 0, 0L);
+        for (AgentDefinition spec : specialistDefs) {
+            telemetry.saveAgentState(project.id(), spec.id(), spec.name(), "READY",
+                    0, 0, 0, 0, 0, 0L);
+        }
+
+        long start = System.currentTimeMillis();
         String answer = orchestrator.prompt()
                 .user(composeUserPrompt(project, team, specialistDefs))
                 .call()
                 .content();
+        long elapsed = System.currentTimeMillis() - start;
+
+        telemetry.saveAgentMessage(project.id(), orchestratorDef.id(), "assistant", answer == null ? "" : answer);
+        telemetry.saveAgentState(project.id(), orchestratorDef.id(), orchestratorDef.name(), "STOPPED",
+                orchestratorBuilt.advisor().cycleCount(), orchestratorBuilt.advisor().messageCount(),
+                orchestratorBuilt.advisor().inputTokens(), orchestratorBuilt.advisor().outputTokens(),
+                orchestratorBuilt.advisor().totalTokens(), elapsed);
 
         var participants = new ArrayList<String>(specialistDefs.size() + 1);
         participants.add(orchestratorDef.id());
         specialistDefs.forEach(s -> participants.add(s.id()));
 
-        return new PatternResult("COMPLETED", "orchestrator", orchestratorDef.id(), answer, participants);
+        QuestResult structured = structuredAnswer.coerce(answer);
+        return new PatternResult("COMPLETED", "orchestrator", orchestratorDef.id(), answer, participants, structured);
     }
 
     /**
@@ -117,7 +152,9 @@ public class OrchestratorPattern {
      * <p>Strands-style: a single {@code query} string in, a string out, errors swallowed
      * into a formatted message so one specialist failure doesn't abort the whole run.
      */
-    private ToolCallback asTool(AgentDefinition def, ChatClient specialistClient) {
+    private ToolCallback asTool(AgentDefinition def, BuiltAgent specialist,
+                                Project project, Session telemetry, AgentDefinition orchestratorDef) {
+        ChatClient specialistClient = specialist.client();
         ToolDefinition definition = ToolDefinition.builder()
                 .name(sanitize(def.name()))
                 // Strands-style: describe what the specialist DOES, not how to call it.
@@ -136,6 +173,12 @@ public class OrchestratorPattern {
 
             @Override
             public String call(String toolInput) {
+                // Telemetry: orchestrator → specialist delegation visible in the UI graph.
+                telemetry.saveAgentTransition(project.id(), UUID.randomUUID().toString(),
+                        orchestratorDef.id(), def.id());
+                telemetry.saveAgentState(project.id(), def.id(), def.name(), "WORKING",
+                        0, 0, 0, 0, 0, 0L);
+                long start = System.currentTimeMillis();
                 try {
                     @SuppressWarnings("unchecked")
                     Map<String, Object> parsed = LENIENT.readValue(toolInput, Map.class);
@@ -143,10 +186,20 @@ public class OrchestratorPattern {
                     if (query.isBlank()) {
                         return "Error in %s (%s): missing or empty 'query'.".formatted(def.name(), def.role());
                     }
-                    return sanitizeForToolResult(specialistClient.prompt().user(query).call().content());
+                    String reply = sanitizeForToolResult(specialistClient.prompt().user(query).call().content());
+                    telemetry.saveAgentMessage(project.id(), def.id(), "assistant", reply == null ? "" : reply);
+                    return reply;
                 } catch (Exception e) {
-                    log.warn("[orchestrator] specialist '{}' raised: {}", def.name(), e.toString());
-                    return "Error in %s (%s): %s".formatted(def.name(), def.role(), e.getMessage());
+                    // Pass the Throwable as the last SLF4J arg so the full cause chain
+                    // lands in CloudWatch — toString() alone strips the stack trace.
+                    log.error("[orchestrator] specialist '{}' raised", def.name(), e);
+                    String detail = Throwables.rootMessage(e);
+                    return "Error in %s (%s): %s".formatted(def.name(), def.role(), detail);
+                } finally {
+                    telemetry.saveAgentState(project.id(), def.id(), def.name(), "STOPPED",
+                            specialist.advisor().cycleCount(), specialist.advisor().messageCount(),
+                            specialist.advisor().inputTokens(), specialist.advisor().outputTokens(),
+                            specialist.advisor().totalTokens(), System.currentTimeMillis() - start);
                 }
             }
         };

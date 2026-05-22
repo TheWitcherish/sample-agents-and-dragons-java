@@ -80,8 +80,8 @@ amplify/
 │   ├── manage-tasks/         # MCP gateway target — agent-side task CRUD
 │   └── invoke-agent-runtime/ # Browser-friendly wrapper around Bedrock AgentCore
 ├── agentcore/
-│   ├── DirectToAgentCoreRuntime.ts  # CDK construct for an AgentCore Runtime container
 │   ├── MCPGateway.ts                # Bedrock MCP gateway with Cognito JWT authorizer
+│   ├── AgentCoreRuntimeRole.ts      # Reusable IAM execution role for AgentCore runtimes
 │   └── …
 └── backend.ts            # Wires everything together
 ```

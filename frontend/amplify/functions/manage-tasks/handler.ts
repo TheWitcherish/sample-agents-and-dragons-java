@@ -32,12 +32,12 @@ export const handler: Handler = async (event, context) => {
   console.log("toolName", toolName);
 
   if (toolName == 'create_task') {
-  
-    const { name, description, createdBy, assignee } = event;
+
+    const { name, description, createdBy, assignee, id } = event;
     let projectId = event.projectId;
-  
-    console.log("createTask", name, description, createdBy, assignee, projectId);
-  
+
+    console.log("createTask", id, name, description, createdBy, assignee, projectId);
+
     if(!projectId && sessionId) {
       const project = await client.models.Task.list({
         filter: {
@@ -52,18 +52,25 @@ export const handler: Handler = async (event, context) => {
       projectId = project.data[0].projectId;
     }
 
-    const result = await client.models.Task.create({ 
-      name, 
-      content: description, 
+    // Honor a caller-supplied id when present (Java backend pre-generates a UUID so its
+    // in-memory task map and AppSync share the same key). Falls back to AppSync auto-id
+    // for the Python runtime which let AppSync own the id.
+    const createInput: Record<string, unknown> = {
+      name,
+      content: description,
       projectId,
       sessionId,
       status: 'CREATED',
-      createdBy, 
-      assignee ,
-    });
-  
+      createdBy,
+      assignee,
+    };
+    if (id) createInput.id = id;
+    const result = await client.models.Task.create(
+      createInput as Parameters<typeof client.models.Task.create>[0]
+    );
+
     return result;
-  
+
   }
   else if (toolName == 'update_task') {
   

@@ -40,9 +40,17 @@ public class AgentFactory {
         this.eventLog = eventLog;
     }
 
+    /**
+     * Pairs a built {@link ChatClient} with its {@link EventCaptureAdvisor}. The advisor
+     * exposes per-agent token usage and cycle count after each model round-trip, which
+     * the patterns publish to AppSync via {@code save_agent_state} so the UI agent
+     * cards display real numbers instead of zeros.
+     */
+    public record BuiltAgent(ChatClient client, EventCaptureAdvisor advisor) {}
+
     /** Build one ChatClient per AgentDefinition, keyed by agent.id (preserves team order). */
-    public Map<String, ChatClient> buildTeam(List<AgentDefinition> definitions, Project project, List<Object> sharedTools) {
-        Map<String, ChatClient> team = new LinkedHashMap<>();
+    public Map<String, BuiltAgent> buildTeam(List<AgentDefinition> definitions, Project project, List<Object> sharedTools) {
+        Map<String, BuiltAgent> team = new LinkedHashMap<>();
         for (AgentDefinition def : definitions) {
             team.put(def.id(), buildOne(def, project, sharedTools, List.of()));
         }
@@ -50,19 +58,21 @@ public class AgentFactory {
     }
 
     /**
-     * Build a single ChatClient with @Tool-annotated POJOs as its tool surface.
-     * Convenience for {@code buildOne(def, project, sharedTools, List.of())}.
+     * Build a single agent (ChatClient + its advisor) with @Tool-annotated POJOs as
+     * its tool surface. Convenience for {@code buildOne(def, project, sharedTools, List.of())}.
      */
-    public ChatClient buildOne(AgentDefinition def, Project project, List<Object> sharedTools) {
+    public BuiltAgent buildOne(AgentDefinition def, Project project, List<Object> sharedTools) {
         return buildOne(def, project, sharedTools, List.of());
     }
 
     /**
-     * Build a single ChatClient with both @Tool-annotated POJOs and runtime-synthesised
-     * {@link ToolCallback}s (used by the orchestrator + swarm patterns).
+     * Build a single agent (ChatClient + its advisor) with both @Tool-annotated POJOs
+     * and runtime-synthesised {@link ToolCallback}s (used by the orchestrator + swarm
+     * patterns).
      */
-    public ChatClient buildOne(AgentDefinition def, Project project,
+    public BuiltAgent buildOne(AgentDefinition def, Project project,
                                List<Object> sharedTools, List<ToolCallback> extraToolCallbacks) {
+        EventCaptureAdvisor advisor = new EventCaptureAdvisor(eventLog, project.id(), def.id(), def.name());
         ChatClient.Builder builder = ChatClient.builder(chatModel)
                 .defaultSystem(def.prompt())
                 .defaultOptions(ChatOptions.builder()
@@ -72,7 +82,7 @@ public class AgentFactory {
                         // ~4096-token default. 8192 leaves headroom for a full HTML deliverable.
                         .maxTokens(8192)
                         .build())
-                .defaultAdvisors(new EventCaptureAdvisor(eventLog, project.id(), def.id(), def.name()));
+                .defaultAdvisors(advisor);
 
         if (!sharedTools.isEmpty()) {
             builder = builder.defaultTools(sharedTools.toArray());
@@ -80,6 +90,6 @@ public class AgentFactory {
         if (!extraToolCallbacks.isEmpty()) {
             builder = builder.defaultToolCallbacks(extraToolCallbacks.toArray(new ToolCallback[0]));
         }
-        return builder.build();
+        return new BuiltAgent(builder.build(), advisor);
     }
 }

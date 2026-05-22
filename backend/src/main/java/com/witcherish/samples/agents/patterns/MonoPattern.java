@@ -3,9 +3,11 @@ package com.witcherish.samples.agents.patterns;
 import com.witcherish.samples.agents.api.dto.AgentDefinition;
 import com.witcherish.samples.agents.api.dto.Config;
 import com.witcherish.samples.agents.api.dto.Project;
+import com.witcherish.samples.agents.api.dto.QuestResult;
 import com.witcherish.samples.agents.api.dto.Team;
 import com.witcherish.samples.agents.core.AgentFactory;
-import com.witcherish.samples.agents.tools.TaskTools;
+import com.witcherish.samples.agents.telemetry.McpTelemetryPublisher.Session;
+import com.witcherish.samples.agents.tools.TaskToolsFactory;
 import com.witcherish.samples.agents.tools.WriteResultToolFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,35 +31,53 @@ public class MonoPattern {
     private static final Logger log = LoggerFactory.getLogger(MonoPattern.class);
 
     private final AgentFactory factory;
-    private final TaskTools taskTools;
+    private final TaskToolsFactory taskToolsFactory;
     private final WriteResultToolFactory writeResultToolFactory;
+    private final StructuredAnswer structuredAnswer;
 
-    public MonoPattern(AgentFactory factory, TaskTools taskTools,
-                       WriteResultToolFactory writeResultToolFactory) {
+    public MonoPattern(AgentFactory factory, TaskToolsFactory taskToolsFactory,
+                       WriteResultToolFactory writeResultToolFactory,
+                       StructuredAnswer structuredAnswer) {
         this.factory = factory;
-        this.taskTools = taskTools;
+        this.taskToolsFactory = taskToolsFactory;
         this.writeResultToolFactory = writeResultToolFactory;
+        this.structuredAnswer = structuredAnswer;
     }
 
-    public PatternResult run(Project project, Team team, Config config) {
+    public PatternResult run(Project project, Team team, Config config, Session telemetry) {
         AgentDefinition def = team.agents().stream()
                 .filter(a -> a.id().equals(team.entrypoint()))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException(
                         "entrypoint agent " + team.entrypoint() + " not found in team.agents"));
 
+        var taskTools = taskToolsFactory.build(project.id(), telemetry);
         var writeResult = writeResultToolFactory.build(project, config).asToolCallback();
-        ChatClient agent = factory.buildOne(def, project,
+        var built = factory.buildOne(def, project,
                 List.of(taskTools),
                 List.of(writeResult));
+        ChatClient agent = built.client();
 
         log.info("[mono] invoking entrypoint={} ({})", def.name(), def.id());
+        telemetry.saveAgentState(project.id(), def.id(), def.name(), "WORKING",
+                0, 0, 0, 0, 0, 0L);
 
+        long start = System.currentTimeMillis();
         String answer = agent.prompt()
                 .user(Prompts.composeMonoPrompt(project, team))
                 .call()
                 .content();
+        long elapsed = System.currentTimeMillis() - start;
 
-        return new PatternResult("COMPLETED", "mono", def.id(), answer, List.of(def.id()));
+        telemetry.saveAgentMessage(project.id(), def.id(), "assistant", answer == null ? "" : answer);
+        // Pull real cycle/token aggregates from the advisor — Spring AI normalises Bedrock
+        // usage onto Usage#getPromptTokens / getCompletionTokens / getTotalTokens.
+        telemetry.saveAgentState(project.id(), def.id(), def.name(), "STOPPED",
+                built.advisor().cycleCount(), built.advisor().messageCount(),
+                built.advisor().inputTokens(), built.advisor().outputTokens(),
+                built.advisor().totalTokens(), elapsed);
+
+        QuestResult structured = structuredAnswer.coerce(answer);
+        return new PatternResult("COMPLETED", "mono", def.id(), answer, List.of(def.id()), structured);
     }
 }

@@ -22,7 +22,23 @@ set -euo pipefail
 # we'd never know).
 : "${IMAGE_TAG:=$(git -C "$(dirname "$0")" rev-parse --short HEAD 2>/dev/null || echo nogit)-$(date -u +%Y%m%d%H%M%S)}"
 : "${EXEC_ROLE_NAME:=BedrockAgentCoreExecRole-${RUNTIME_NAME}}"
-: "${S3_BUCKET:=}"                                      # optional — used by writeResult tool
+
+# Used by the writeResult tool to persist HTML deliverables. If not set explicitly,
+# auto-resolve from frontend/amplify_outputs.json so a single ./deploy.sh after
+# `npx ampx sandbox` works without manual env-var juggling.
+: "${S3_BUCKET:=}"
+if [[ -z "${S3_BUCKET}" ]]; then
+  AMPLIFY_OUTPUTS="$(dirname "$0")/../frontend/amplify_outputs.json"
+  if [[ -f "${AMPLIFY_OUTPUTS}" ]]; then
+    S3_BUCKET="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('storage',{}).get('bucket_name',''))" "${AMPLIFY_OUTPUTS}" 2>/dev/null || true)"
+    if [[ -n "${S3_BUCKET}" ]]; then
+      echo "  resolved S3_BUCKET=${S3_BUCKET} from ${AMPLIFY_OUTPUTS}"
+    fi
+  fi
+fi
+if [[ -z "${S3_BUCKET}" ]]; then
+  echo "  WARNING: S3_BUCKET unset and amplify_outputs.json missing/empty — writeResult will not be able to persist deliverables."
+fi
 
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
@@ -69,6 +85,11 @@ TRUST_DOC='{
   }]
 }'
 ECR_REPO_ARN="arn:aws:ecr:${AWS_REGION}:${ACCOUNT_ID}:repository/${ECR_REPO}"
+S3_STATEMENT=""
+if [[ -n "${S3_BUCKET}" ]]; then
+  S3_STATEMENT=",
+    {\"Effect\":\"Allow\",\"Action\":[\"s3:PutObject\",\"s3:GetObject\"],\"Resource\":\"arn:aws:s3:::${S3_BUCKET}/apps/*\"}"
+fi
 INLINE_DOC=$(cat <<EOF
 {
   "Version":"2012-10-17",
@@ -76,8 +97,7 @@ INLINE_DOC=$(cat <<EOF
     {"Effect":"Allow","Action":["bedrock:InvokeModel","bedrock:InvokeModelWithResponseStream","bedrock:Converse","bedrock:ConverseStream"],"Resource":"*"},
     {"Effect":"Allow","Action":["logs:CreateLogGroup","logs:CreateLogStream","logs:PutLogEvents","logs:DescribeLogStreams"],"Resource":"*"},
     {"Effect":"Allow","Action":"ecr:GetAuthorizationToken","Resource":"*"},
-    {"Effect":"Allow","Action":["ecr:BatchGetImage","ecr:GetDownloadUrlForLayer"],"Resource":"${ECR_REPO_ARN}"},
-    {"Effect":"Allow","Action":["s3:PutObject","s3:GetObject"],"Resource":"arn:aws:s3:::${S3_BUCKET:-not-configured}/apps/*"}
+    {"Effect":"Allow","Action":["ecr:BatchGetImage","ecr:GetDownloadUrlForLayer"],"Resource":"${ECR_REPO_ARN}"}${S3_STATEMENT}
   ]
 }
 EOF
