@@ -8,6 +8,7 @@ import com.witcherish.samples.agents.api.dto.QuestResult;
 import com.witcherish.samples.agents.api.dto.Team;
 import com.witcherish.samples.agents.core.AgentFactory;
 import com.witcherish.samples.agents.core.AgentFactory.BuiltAgent;
+import com.witcherish.samples.agents.core.RoleContracts;
 import com.witcherish.samples.agents.telemetry.McpTelemetryPublisher.Session;
 import com.witcherish.samples.agents.tools.TaskToolsFactory;
 import com.witcherish.samples.agents.tools.WriteResultToolFactory;
@@ -129,10 +130,14 @@ public class GraphPattern {
         // BuiltAgent map so each node's STOPPED telemetry pulls real token/cycle counts.
         ToolCallback writeResult = writeResultToolFactory.build(project, config, telemetry).asToolCallback();
         var taskTools = taskToolsFactory.build(project.id(), telemetry);
+        // Each node's prompt is shaped with its role contract + the Graph node epilogue
+        // so nodes return downstream-friendly structured output (or a writeResult URL,
+        // for Frontend nodes) rather than wandering into prose.
         Map<String, BuiltAgent> built = new LinkedHashMap<>();
         for (AgentDefinition def : defsById.values()) {
-            built.put(def.id(), factory.buildOne(def, project,
-                    List.of(taskTools), List.of(writeResult)));
+            built.put(def.id(), factory.buildOne(
+                    RoleContracts.shape(def, RoleContracts.Pattern.GRAPH, false),
+                    project, List.of(taskTools), List.of(writeResult)));
         }
 
         String task = Prompts.composeUserPrompt(project, team);

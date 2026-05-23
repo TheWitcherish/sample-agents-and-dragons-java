@@ -10,6 +10,7 @@ import com.witcherish.samples.agents.api.dto.QuestResult;
 import com.witcherish.samples.agents.api.dto.Team;
 import com.witcherish.samples.agents.core.AgentFactory;
 import com.witcherish.samples.agents.core.AgentFactory.BuiltAgent;
+import com.witcherish.samples.agents.core.RoleContracts;
 import com.witcherish.samples.agents.observer.Throwables;
 import com.witcherish.samples.agents.telemetry.McpTelemetryPublisher.Session;
 import com.witcherish.samples.agents.tools.TaskToolsFactory;
@@ -68,6 +69,9 @@ public class OrchestratorPattern {
             }
             """;
 
+    // Role + pattern contracts live in RoleContracts (shared across all four patterns).
+    // See RoleContracts.shape(...) below.
+
     private final AgentFactory factory;
     private final TaskToolsFactory taskToolsFactory;
     private final WriteResultToolFactory writeResultToolFactory;
@@ -105,17 +109,29 @@ public class OrchestratorPattern {
         // TaskTools + writeResult; they cannot delegate further. Each specialist's
         // BuiltAgent (ChatClient + advisor) is captured so we can publish accurate
         // token/cycle aggregates when the specialist's turn ends.
+        //
+        // Each specialist's prompt is augmented by RoleContracts.shape with both a
+        // role contract (what this persona MUST produce) and a pattern epilogue (how it
+        // behaves as an Orchestrator specialist — return text, do not delegate further).
+        // Without the contracts, weaker tool-using models (Haiku 4.5) treat delegation
+        // as conversational and respond with prose instead of fulfilling their role.
         List<ToolCallback> specialistTools = specialistDefs.stream()
                 .map(spec -> asTool(spec,
-                        factory.buildOne(spec, project, List.of(taskTools), List.of(writeResult)),
+                        factory.buildOne(
+                                RoleContracts.shape(spec, RoleContracts.Pattern.ORCHESTRATOR, false),
+                                project, List.of(taskTools), List.of(writeResult)),
                         project, telemetry, orchestratorDef))
                 .toList();
 
-        // The orchestrator gets every specialist tool plus writeResult itself.
+        // The orchestrator gets every specialist tool plus writeResult itself. Its prompt
+        // is shaped with the Coordinator/CTO role contract + the orchestrator-as-boss
+        // pattern epilogue so it knows to verify specialist replies and only fall back
+        // to writing HTML itself as a last resort.
         var orchestratorCallbacks = new ArrayList<>(specialistTools);
         orchestratorCallbacks.add(writeResult);
-        BuiltAgent orchestratorBuilt = factory.buildOne(orchestratorDef, project,
-                List.of(taskTools), orchestratorCallbacks);
+        BuiltAgent orchestratorBuilt = factory.buildOne(
+                RoleContracts.shape(orchestratorDef, RoleContracts.Pattern.ORCHESTRATOR, true),
+                project, List.of(taskTools), orchestratorCallbacks);
         ChatClient orchestrator = orchestratorBuilt.client();
 
         log.info("[orchestrator] entrypoint={} specialists={}",
@@ -245,8 +261,9 @@ public class OrchestratorPattern {
                 You do not write code yourself. You decompose the goal and CALL these specialist tools:
                 %s
 
-                You also have a `writeResult` tool. The Frontend specialist will normally call it itself \
-                and return you a URL — your job in that case is just to forward that URL to the user.
+                You also have a `writeResult` tool. The Frontend specialist is REQUIRED to call \
+                writeResult itself with a complete index.html and return the URL — your job is to \
+                forward that URL to the user.
 
                 Procedure (mandatory):
                 1. Read the project goal. Identify the deliverable: an index.html for the requested app.
@@ -256,7 +273,12 @@ public class OrchestratorPattern {
                 4. EVERY specialist tool call should include a `reasoning` argument with: \
                 `innerThought` (one short sentence: why this specialist now), `confidence` (high/medium/low), \
                 and `memoryNotes` (key decisions to carry forward). This is shown to the user live.
-                5. The Frontend specialist returns a URL — that URL is the deliverable.
+                5. VERIFY the Frontend specialist's reply: it MUST contain a URL ending in `/index.html`. \
+                If it returned prose instead (e.g. "I'll create..."), call the SAME Frontend specialist \
+                AGAIN with a stricter query like: "STOP. Call writeResult NOW with the complete \
+                self-contained index.html. Do not respond with prose. The user is waiting for the URL." \
+                If it still fails after a second attempt, call `writeResult` yourself with the best \
+                implementation you can produce inline.
                 6. Your final reply MUST be a SHORT plain-text message containing: (a) the URL returned by \
                 the Frontend specialist (or writeResult), (b) a one-paragraph summary of what was built. \
                 Keep it under 150 words. NO markdown bullets, NO code blocks, NO HTML — just plain prose. \
@@ -268,6 +290,7 @@ public class OrchestratorPattern {
     private static String sanitize(String name) {
         return name.replaceAll("[^a-zA-Z0-9_-]", "_");
     }
+
 
     /**
      * Specialist replies become tool_result messages. Spring AI 1.1.3 round-trips them

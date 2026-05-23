@@ -10,6 +10,7 @@ import com.witcherish.samples.agents.api.dto.QuestResult;
 import com.witcherish.samples.agents.api.dto.Team;
 import com.witcherish.samples.agents.core.AgentFactory;
 import com.witcherish.samples.agents.core.AgentFactory.BuiltAgent;
+import com.witcherish.samples.agents.core.RoleContracts;
 import com.witcherish.samples.agents.telemetry.McpTelemetryPublisher.Session;
 import com.witcherish.samples.agents.tools.TaskToolsFactory;
 import com.witcherish.samples.agents.tools.WriteResultToolFactory;
@@ -123,11 +124,15 @@ public class SwarmPattern {
         Map<String, BuiltAgent> built = new LinkedHashMap<>();
         for (AgentDefinition def : team.agents()) {
             ToolCallback handoffTool = buildHandoffTool(def, defsByName, handoff);
-            // Apply the SINGLE_HANDOFF_INSTRUCTION to the entrypoint, mirroring the Python.
-            AgentDefinition shaped = def.id().equals(entrypointDef.id())
-                    ? new AgentDefinition(def.id(), def.name(), def.model(),
-                            def.prompt() + SINGLE_HANDOFF_INSTRUCTION, def.role(), def.tools())
-                    : def;
+            // Layer 1: shape each peer with its role contract + swarm-peer pattern epilogue.
+            // Layer 2: the entrypoint also gets SINGLE_HANDOFF_INSTRUCTION (Strands quirk —
+            // multiple handoffs in one turn collapse to the last one).
+            AgentDefinition shaped = RoleContracts.shape(def, RoleContracts.Pattern.SWARM, false);
+            if (def.id().equals(entrypointDef.id())) {
+                shaped = new AgentDefinition(shaped.id(), shaped.name(), shaped.model(),
+                        shaped.prompt() + SINGLE_HANDOFF_INSTRUCTION,
+                        shaped.role(), shaped.tools());
+            }
             built.put(def.id(), factory.buildOne(shaped, project,
                     List.of(taskTools), List.of(writeResult, handoffTool)));
         }

@@ -6,6 +6,7 @@ import com.witcherish.samples.agents.api.dto.Project;
 import com.witcherish.samples.agents.api.dto.QuestResult;
 import com.witcherish.samples.agents.api.dto.Team;
 import com.witcherish.samples.agents.core.AgentFactory;
+import com.witcherish.samples.agents.core.RoleContracts;
 import com.witcherish.samples.agents.telemetry.McpTelemetryPublisher.Session;
 import com.witcherish.samples.agents.tools.TaskToolsFactory;
 import com.witcherish.samples.agents.tools.WriteResultToolFactory;
@@ -53,9 +54,11 @@ public class MonoPattern {
 
         var taskTools = taskToolsFactory.build(project.id(), telemetry);
         var writeResult = writeResultToolFactory.build(project, config, telemetry).asToolCallback();
-        var built = factory.buildOne(def, project,
-                List.of(taskTools),
-                List.of(writeResult));
+        // Mono's lone agent owns the whole goal. Shape its prompt with role contract +
+        // Mono pattern epilogue so it can't pass the buck — there's no one to pass it to.
+        var built = factory.buildOne(
+                RoleContracts.shape(def, RoleContracts.Pattern.MONO, true),
+                project, List.of(taskTools), List.of(writeResult));
         ChatClient agent = built.client();
 
         log.info("[mono] invoking entrypoint={} ({})", def.name(), def.id());
