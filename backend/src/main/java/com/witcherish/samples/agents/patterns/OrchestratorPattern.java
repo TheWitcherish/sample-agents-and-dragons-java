@@ -53,7 +53,16 @@ public class OrchestratorPattern {
             {
               "type": "object",
               "properties": {
-                "query": { "type": "string", "description": "The sub-task to delegate, in natural language." }
+                "query":     { "type": "string", "description": "The sub-task to delegate, in natural language." },
+                "reasoning": {
+                  "type": "object",
+                  "description": "Optional reasoning sidecar — explain why you're delegating to this specialist now. See ToolChoiceExplanation.",
+                  "properties": {
+                    "innerThought": {"type": "string", "description": "Why this specialist is the right pick for this sub-task."},
+                    "confidence":   {"type": "string", "description": "high | medium | low"},
+                    "memoryNotes":  {"type": "array", "items": {"type": "string"}, "description": "Insights to carry across the orchestration."}
+                  }
+                }
               },
               "required": ["query"]
             }
@@ -86,7 +95,7 @@ public class OrchestratorPattern {
 
         // The write_result tool is shared by every agent in the team — same projectId,
         // same bucket. Specialists call it directly to persist the deliverable.
-        ToolCallback writeResult = writeResultToolFactory.build(project, config).asToolCallback();
+        ToolCallback writeResult = writeResultToolFactory.build(project, config, telemetry).asToolCallback();
 
         // Per-quest TaskTools: shares an in-memory map across all agents in this run,
         // and mirrors createTask/updateTask to AppSync via MCP for live Adventure Log.
@@ -182,6 +191,14 @@ public class OrchestratorPattern {
                 try {
                     @SuppressWarnings("unchecked")
                     Map<String, Object> parsed = LENIENT.readValue(toolInput, Map.class);
+                    // Publish the orchestrator's reasoning *before* the specialist runs, so
+                    // the Adventure Log shows "why I'm calling X" right next to the delegation
+                    // edge. Aligned with Spring AI Recipes' tool-choice-explanation pattern.
+                    String reasoning = renderReasoning(parsed.get("reasoning"));
+                    if (reasoning != null) {
+                        telemetry.saveAgentMessage(project.id(), orchestratorDef.id(),
+                                "reasoning", reasoning);
+                    }
                     String query = String.valueOf(parsed.getOrDefault("query", "")).strip();
                     if (query.isBlank()) {
                         return "Error in %s (%s): missing or empty 'query'.".formatted(def.name(), def.role());
@@ -236,8 +253,11 @@ public class OrchestratorPattern {
                 2. Plan the build. Typically: architecture → frontend implementation → code review.
                 3. CALL each specialist tool one at a time, in a sensible order — wait for each response \
                 before the next. Do not describe what you would do; actually invoke the tools.
-                4. The Frontend specialist returns a URL — that URL is the deliverable.
-                5. Your final reply MUST be a SHORT plain-text message containing: (a) the URL returned by \
+                4. EVERY specialist tool call should include a `reasoning` argument with: \
+                `innerThought` (one short sentence: why this specialist now), `confidence` (high/medium/low), \
+                and `memoryNotes` (key decisions to carry forward). This is shown to the user live.
+                5. The Frontend specialist returns a URL — that URL is the deliverable.
+                6. Your final reply MUST be a SHORT plain-text message containing: (a) the URL returned by \
                 the Frontend specialist (or writeResult), (b) a one-paragraph summary of what was built. \
                 Keep it under 150 words. NO markdown bullets, NO code blocks, NO HTML — just plain prose. \
                 The user opens the URL to play the deliverable."""
@@ -260,5 +280,32 @@ public class OrchestratorPattern {
                 .replaceAll("[\\t\\f\\r\\n]+", " ")
                 .replaceAll(" +", " ")
                 .strip();
+    }
+
+    /**
+     * Render an orchestrator's reasoning sidecar (raw JSON map from the lenient parser)
+     * into a single message body, or {@code null} if no usable {@code innerThought}.
+     * Mirrors the Spring AI Recipes
+     * <a href="https://github.com/habuma/spring-ai-recipes/tree/main/tool-choice-explanation">tool-choice-explanation</a>
+     * pattern using a hand-rolled record + lenient parsing (we're on Spring AI 1.1.6,
+     * which predates {@code AugmentedToolCallbackProvider}).
+     */
+    @SuppressWarnings("unchecked")
+    private static String renderReasoning(Object raw) {
+        if (!(raw instanceof Map<?, ?> wild)) return null;
+        Map<String, Object> m = (Map<String, Object>) wild;
+        Object thought = m.get("innerThought");
+        if (thought == null || String.valueOf(thought).isBlank()) return null;
+        StringBuilder sb = new StringBuilder(String.valueOf(thought).strip());
+        Object conf = m.get("confidence");
+        if (conf != null && !String.valueOf(conf).isBlank()) {
+            sb.append(" [confidence: ").append(String.valueOf(conf).strip()).append("]");
+        }
+        Object notes = m.get("memoryNotes");
+        if (notes instanceof java.util.List<?> l && !l.isEmpty()) {
+            sb.append("\nNotes: ");
+            sb.append(l.stream().map(String::valueOf).reduce((a, b) -> a + "; " + b).orElse(""));
+        }
+        return sb.toString();
     }
 }

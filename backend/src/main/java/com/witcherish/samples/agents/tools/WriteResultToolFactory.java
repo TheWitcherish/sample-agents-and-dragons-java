@@ -2,6 +2,7 @@ package com.witcherish.samples.agents.tools;
 
 import com.witcherish.samples.agents.api.dto.Config;
 import com.witcherish.samples.agents.api.dto.Project;
+import com.witcherish.samples.agents.telemetry.McpTelemetryPublisher.Session;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -22,8 +23,8 @@ public class WriteResultToolFactory {
         this.region = region;
     }
 
-    public WriteResultTool build(Project project, Config config) {
+    public WriteResultTool build(Project project, Config config, Session telemetry) {
         String bucket = (config != null) ? config.s3BucketName() : null;
-        return new WriteResultTool(project.id(), bucket, region);
+        return new WriteResultTool(project.id(), bucket, region, telemetry);
     }
 }

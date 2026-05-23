@@ -38,7 +38,46 @@ import java.util.UUID;
  * runs next; here the <em>topology</em> chooses. That makes Graph the right primitive
  * when the workflow is known up front (research → analysis + fact-check → report).
  *
+ * <h2>Spring AI Recipes alignment</h2>
+ *
+ * <p>This class is a hand-rolled equivalent of the {@code StateGraph}-backed recipe
+ * <a href="https://github.com/habuma/spring-ai-recipes/tree/main/graph-workflow">{@code graph-workflow}</a>.
+ * That recipe uses {@code com.alibaba.cloud.ai:spring-ai-alibaba-graph-core} (Spring AI
+ * Alibaba extensions, not Spring AI core). Concepts map one-to-one — readers familiar
+ * with the recipe can transfer their mental model:
+ *
+ * <ul>
+ *   <li><strong>{@code StateGraph(name, stateStrategies)}</strong> ≈ this class plus the
+ *       {@link Team#agents()}/{@link Team#connections()} pair on the request payload.</li>
+ *   <li><strong>{@code addNode(name, AsyncNodeAction)}</strong> ≈ each agent built by
+ *       {@code factory.buildOne(...)} in the {@code clients}/{@code built} map.</li>
+ *   <li><strong>{@code addEdge(from, to)}</strong> ≈ entries in {@code outgoing}/
+ *       {@code incoming} adjacency derived from {@code team.connections()}.</li>
+ *   <li><strong>{@code addConditionalEdges(from, edge_async(state -&gt; ...))}</strong>
+ *       — not modelled. Our edges are static; agents don't branch the topology at runtime.
+ *       The orchestrator pattern is where dynamic routing lives. (See {@code graph-workflow-loop}
+ *       for the conditional-edge variant — that's a future {@code GraphLoopPattern}.)</li>
+ *   <li><strong>{@code START} / {@code END}</strong> sentinels ≈ implicit: {@code START}
+ *       is whatever node has zero {@code incoming}; {@code END} is the union of nodes
+ *       with zero {@code outgoing} (the {@code sinks} list below).</li>
+ *   <li><strong>{@code KeyStrategy} / {@code ReplaceStrategy}</strong> ≈ the
+ *       {@code Map<String, String> outputs} below: each node-id key holds the most
+ *       recent output, with new values overwriting prior ones (i.e. ReplaceStrategy).</li>
+ *   <li><strong>{@code .compile()}</strong> ≈ {@link #topoSort(Set, Map, Map)}: takes
+ *       the declared graph and produces an executable plan (topological order).</li>
+ *   <li><strong>{@code CompileConfig.builder().interruptBefore(...)}</strong> — not
+ *       modelled. Maps to the {@code graph-workflow-hitl} recipe's human-in-the-loop;
+ *       a future {@code HumanReviewPattern} would expose this.</li>
+ * </ul>
+ *
+ * <p>Why hand-rolled rather than depending on {@code spring-ai-alibaba-graph-core}: that
+ * library targets Spring AI 2.0.0-M5; we're pinned to Spring AI 1.1.6 stable for AgentCore
+ * compatibility. The Alibaba dep is a fine drop-in once 2.x lands.
+ *
  * @see <a href="https://strandsagents.com/docs/user-guide/concepts/multi-agent/graph/">Strands — Graph</a>
+ * @see <a href="https://github.com/habuma/spring-ai-recipes/tree/main/graph-workflow">spring-ai-recipes — graph-workflow</a>
+ * @see <a href="https://github.com/habuma/spring-ai-recipes/tree/main/graph-workflow-loop">spring-ai-recipes — graph-workflow-loop (conditional cycles)</a>
+ * @see <a href="https://github.com/habuma/spring-ai-recipes/tree/main/graph-workflow-hitl">spring-ai-recipes — graph-workflow-hitl (interruptBefore)</a>
  */
 @Component
 public class GraphPattern {
@@ -88,7 +127,7 @@ public class GraphPattern {
         // Each agent gets the same writeResult + TaskTools surface as the other patterns,
         // so a node can persist a deliverable when its prompt asks it to. We keep the
         // BuiltAgent map so each node's STOPPED telemetry pulls real token/cycle counts.
-        ToolCallback writeResult = writeResultToolFactory.build(project, config).asToolCallback();
+        ToolCallback writeResult = writeResultToolFactory.build(project, config, telemetry).asToolCallback();
         var taskTools = taskToolsFactory.build(project.id(), telemetry);
         Map<String, BuiltAgent> built = new LinkedHashMap<>();
         for (AgentDefinition def : defsById.values()) {

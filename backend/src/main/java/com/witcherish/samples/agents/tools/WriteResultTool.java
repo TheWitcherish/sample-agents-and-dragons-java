@@ -3,6 +3,8 @@ package com.witcherish.samples.agents.tools;
 import com.fasterxml.jackson.core.json.JsonReadFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.witcherish.samples.agents.api.dto.ToolChoiceExplanation;
+import com.witcherish.samples.agents.telemetry.McpTelemetryPublisher.Session;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.ToolCallback;
@@ -62,6 +64,15 @@ public class WriteResultTool {
                 "content": {
                   "type": "string",
                   "description": "The complete HTML document (with embedded CSS and JavaScript) to persist."
+                },
+                "reasoning": {
+                  "type": "object",
+                  "description": "Optional reasoning sidecar — explain why you're shipping now and how confident you are. See ToolChoiceExplanation.",
+                  "properties": {
+                    "innerThought": {"type": "string", "description": "Why you're calling this tool right now and what you expect to get back. One short sentence."},
+                    "confidence":   {"type": "string", "description": "How confident you are about this choice: high, medium, or low."},
+                    "memoryNotes":  {"type": "array", "items": {"type": "string"}, "description": "Key insights worth remembering for the rest of the quest."}
+                  }
                 }
               },
               "required": ["content"]
@@ -73,26 +84,68 @@ public class WriteResultTool {
             "Use this once you have the final HTML/CSS/JavaScript for the requested app. " +
             "The 'content' parameter must be the entire HTML document, ready to render in a browser. " +
             "Returns a URL the user can open to play the deliverable. " +
-            "Call this tool exactly once at the end of the run.";
+            "Call this tool exactly once at the end of the run. " +
+            "Optionally include a 'reasoning' object with innerThought + confidence to show your work in the Adventure Log.";
+
+    /** Synthetic agent id used when publishing reasoning from a {@code @Tool} call. */
+    private static final String REASONING_AGENT_ID = "writeResult";
 
     private final String projectId;
     private final String bucket;
     private final String region;
+    private final Session telemetry;
 
     /** Lazily initialised: only when an S3 write actually happens. */
     private volatile S3Client s3;
 
-    public WriteResultTool(String projectId, String bucket, String region) {
+    public WriteResultTool(String projectId, String bucket, String region, Session telemetry) {
         this.projectId = projectId;
         this.bucket = bucket;
         this.region = (region == null || region.isBlank()) ? "us-east-1" : region;
+        this.telemetry = telemetry == null ? Session.NO_OP : telemetry;
     }
 
     @Tool(description = WRITE_RESULT_DESCRIPTION)
     public String writeResult(
             @ToolParam(description = "The complete HTML document (with embedded CSS and JavaScript) to persist.")
-            String content) {
+            String content,
+            @ToolParam(required = false,
+                    description = "Optional reasoning sidecar — explain why you're shipping now. innerThought + confidence + memoryNotes.")
+            ToolChoiceExplanation reasoning) {
+        publishReasoning(reasoning);
         return doWrite(content);
+    }
+
+    /**
+     * Forward {@link ToolChoiceExplanation#render() rendered reasoning} to the Adventure
+     * Log as an {@code AgentMessage} with role={@code reasoning}. The frontend's existing
+     * subscription on {@code AgentMessage} renders these alongside other model output.
+     */
+    private void publishReasoning(ToolChoiceExplanation reasoning) {
+        if (reasoning == null || !reasoning.isPresent()) {
+            return;
+        }
+        telemetry.saveAgentMessage(projectId, REASONING_AGENT_ID, "reasoning", reasoning.render());
+    }
+
+    /**
+     * Convert a lenient JSON map (from the inline {@link ToolCallback} path) into a
+     * {@link ToolChoiceExplanation}. Returns {@link ToolChoiceExplanation#empty()} on any
+     * shape mismatch — reasoning is best-effort and must never break a tool call.
+     */
+    @SuppressWarnings("unchecked")
+    private static ToolChoiceExplanation parseReasoning(Object raw) {
+        if (!(raw instanceof Map<?, ?> wild)) {
+            return ToolChoiceExplanation.empty();
+        }
+        Map<String, Object> m = (Map<String, Object>) wild;
+        String thought = m.get("innerThought") == null ? "" : String.valueOf(m.get("innerThought"));
+        String conf    = m.get("confidence")   == null ? "" : String.valueOf(m.get("confidence"));
+        Object notesRaw = m.get("memoryNotes");
+        java.util.List<String> notes = (notesRaw instanceof java.util.List<?> l)
+                ? l.stream().map(String::valueOf).toList()
+                : java.util.List.of();
+        return new ToolChoiceExplanation(thought, conf, notes);
     }
 
     /**
@@ -128,6 +181,7 @@ public class WriteResultTool {
                 try {
                     @SuppressWarnings("unchecked")
                     Map<String, Object> parsed = LENIENT_TOOL_INPUT.readValue(toolInput, Map.class);
+                    publishReasoning(parseReasoning(parsed.get("reasoning")));
                     Object c = parsed.get("content");
                     return doWrite(c == null ? "" : c.toString());
                 } catch (Exception e) {

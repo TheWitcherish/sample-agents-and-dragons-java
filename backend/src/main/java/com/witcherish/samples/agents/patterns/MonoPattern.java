@@ -52,7 +52,7 @@ public class MonoPattern {
                         "entrypoint agent " + team.entrypoint() + " not found in team.agents"));
 
         var taskTools = taskToolsFactory.build(project.id(), telemetry);
-        var writeResult = writeResultToolFactory.build(project, config).asToolCallback();
+        var writeResult = writeResultToolFactory.build(project, config, telemetry).asToolCallback();
         var built = factory.buildOne(def, project,
                 List.of(taskTools),
                 List.of(writeResult));

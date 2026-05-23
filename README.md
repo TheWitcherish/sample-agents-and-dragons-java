@@ -141,6 +141,36 @@ Each pattern ships a ready-to-curl JSON payload in `backend/samples/`. The `/run
 
 ---
 
+## Spring AI Recipes alignment
+
+Our four patterns map onto Mark Heckler's [`spring-ai-recipes`](https://github.com/habuma/spring-ai-recipes) — a community catalogue of single-purpose Spring AI demos. Every recipe in that repo is laser-focused on **one** primitive; our patterns weave several together. The table below is the audience's bridge: if they've read a recipe, they can find its concept in our code.
+
+| Our pattern | Recipe(s) it leverages | Where to look in our code |
+|---|---|---|
+| **Mono** | [`skills`](https://github.com/habuma/spring-ai-recipes/tree/main/skills), [`todo-write-tool`](https://github.com/habuma/spring-ai-recipes/tree/main/todo-write-tool), [`tool-choice-explanation`](https://github.com/habuma/spring-ai-recipes/tree/main/tool-choice-explanation) | `MonoPattern.java` + `WriteResultTool.java` + `TaskTools.java`. Same `@Tool` POJOs the recipes show, plus a `ToolChoiceExplanation` reasoning sidecar (see below). |
+| **Orchestrator** | [`a2a-client`](https://github.com/habuma/spring-ai-recipes/tree/main/a2a-client) (TaskTool subagents), [`tool-choice-explanation`](https://github.com/habuma/spring-ai-recipes/tree/main/tool-choice-explanation) | `OrchestratorPattern.asTool(...)` hand-rolls what `TaskTool.builder().subagentReferences(...)` does in the recipe — but with hooks for telemetry and reasoning. |
+| **Graph** | [`graph-workflow`](https://github.com/habuma/spring-ai-recipes/tree/main/graph-workflow), [`graph-workflow-loop`](https://github.com/habuma/spring-ai-recipes/tree/main/graph-workflow-loop), [`graph-workflow-hitl`](https://github.com/habuma/spring-ai-recipes/tree/main/graph-workflow-hitl) | `GraphPattern.java` — class Javadoc maps every Alibaba `StateGraph` concept (`addNode`, `addConditionalEdges`, `START`/`END`, `KeyStrategy`/`ReplaceStrategy`, `interruptBefore`) onto our hand-rolled topology so readers can switch between mental models. |
+| **Swarm** | (no direct recipe — Strands-native) | `SwarmPattern.java`. The `handoff_to_agent` tool with `returnDirect=true` is custom; a future port could use `a2a-server`/`a2a-client` to model peer-to-peer over A2A. |
+
+### What we adopted: `tool-choice-explanation` reasoning sidecar
+
+Inspired by the [`tool-choice-explanation`](https://github.com/habuma/spring-ai-recipes/tree/main/tool-choice-explanation) recipe (Spring AI 2.0.0-M5's `AugmentedToolCallbackProvider`). Since we're pinned to **Spring AI 1.1.6** for AgentCore compatibility, we hand-roll the same effect:
+
+- A typed record in [`api/dto/ToolChoiceExplanation.java`](backend/src/main/java/com/witcherish/samples/agents/api/dto/ToolChoiceExplanation.java) carries `innerThought` + `confidence` + `memoryNotes` alongside the real tool arguments.
+- `WriteResultTool.writeResult(...)` and the orchestrator's specialist `asTool(...)` both accept the record (or its lenient JSON shape) and forward `innerThought` to `Session.saveAgentMessage(role="reasoning", ...)`.
+- The frontend's existing `AgentMessage` subscription renders the reasoning in the Adventure Log alongside model output — viewers see *why* the orchestrator picked a specialist, *why* the agent shipped now, in real time.
+
+> The orchestrator's system prompt explicitly asks for `reasoning` on every specialist call. The Frontend specialist's `writeResult` reasoning is optional — Sonnet 4.x usually fills it in unprompted.
+
+### What we deliberately skipped (for now)
+
+- **`a2a-server` / `a2a-client`** — A2A is a great future direction but adds an HTTP transport layer that competes with the MCP gateway story we already tell. Park as roadmap.
+- **`longterm-memory` (`AutoMemoryToolsAdvisor`)** — our quests are single-session. LTM gives no audience-visible payoff in a 90-second demo.
+- **`graph-workflow-loop` / `graph-workflow-hitl`** — conditional cycles + human-in-the-loop. Both natural extensions; would land as a `HumanReviewPattern` (Pattern 5) in a future iteration.
+- **`AugmentedToolCallbackProvider` itself** — only ships in Spring AI 2.x. We'd swap our hand-roll for the upstream construct on the 2.x bump.
+
+---
+
 ## Live UI from a Java backend (Strands-style telemetry)
 
 The React frontend's agent cards, edges, and Adventure Log are wired to AppSync subscriptions on `AgentRun` / `AgentTransition` / `AgentMessage` / `Task`. Strands' Python runtime fed those tables natively; the Java port reaches them through **the same Bedrock AgentCore MCP Gateway** the agents already use for their domain tools — one protocol, two roles.
@@ -415,3 +445,4 @@ Aligned with the talk-flow:
 - [x] **Step 14 — Real token + cycle aggregates** — `EventCaptureAdvisor` reads Spring AI's normalised `Usage` metadata; agent cards show actual prompt/completion/total tokens plus model-call cycle counts.
 - [x] **Step 15 — Production scars patched** — global `SpringAiJsonLeniency` workaround for the strict-JSON re-encoding bug, full-stack error logging via `Throwables.rootMessage(e)` + `log.error("...", e)`, AWS SDK request-level DEBUG logs in CloudWatch.
 - [x] **Step 16 — Canonical seed data** — `frontend/src/data/{agents,quests}.json` is the single source of truth; both the Admin "Load Agents" button (TS) and the `seed-data.py` bootstrap import the same files. Edits stop drifting between consumers.
+- [x] **Step 17 — `spring-ai-recipes` alignment** — `GraphPattern` Javadoc maps onto Alibaba `StateGraph` vocabulary; `OrchestratorPattern` and `WriteResultTool` adopt the [`tool-choice-explanation`](https://github.com/habuma/spring-ai-recipes/tree/main/tool-choice-explanation) recipe via a hand-rolled `ToolChoiceExplanation` record so the model's reasoning shows up live in the Adventure Log.

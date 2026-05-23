@@ -113,7 +113,7 @@ public class SwarmPattern {
         // agent ships last — earlier peers exchange HTML via handoff_to_agent context,
         // never via writeResult. This dodges Spring AI 1.1.3's strict-JSON quirk on
         // re-encoding multi-line tool inputs across turns.
-        ToolCallback writeResult = writeResultToolFactory.build(project, config).asToolCallback();
+        ToolCallback writeResult = writeResultToolFactory.build(project, config, telemetry).asToolCallback();
         var taskTools = taskToolsFactory.build(project.id(), telemetry);
 
         // Build one BuiltAgent per agent (ChatClient + advisor). Each agent's tool surface =
