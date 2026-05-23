@@ -75,5 +75,17 @@
       "Smooth alien movement patterns",
       "Satisfying explosion effects"
     ]
+  },
+  {
+    "name": "Tetris",
+    "prompt": "Build a classic Tetris game with the seven standard tetrominoes (I, O, T, S, Z, J, L), a 10-column by 20-row playfield, gravity that speeds up as levels progress, line clearing with multi-line bonuses (single, double, triple, tetris), next-piece preview, hold-piece slot, score and level display, and a game over screen when the stack reaches the top. Keep controls touch-friendly: tap to rotate, swipe left/right to move, swipe down for soft drop, two-finger tap for hard drop. Include subtle line-clear animations and a clean retro-blocky visual style. Single self-contained index.html, playable on ipad tablet and smartphone.",
+    "mandatoryAgentRoles": [],
+    "authorizedAgentList": [],
+    "authorizedPatternList": [],
+    "teamDirectionSamples": [
+      "Classic Game Boy color palette with green-tinted background",
+      "Smooth piece-locking animation with screen shake on tetris clears",
+      "Add a ghost piece showing where the active tetromino will land"
+    ]
   }
 ]
