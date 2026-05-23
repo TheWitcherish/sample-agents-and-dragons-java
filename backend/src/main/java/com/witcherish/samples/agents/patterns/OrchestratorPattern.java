@@ -147,18 +147,20 @@ public class OrchestratorPattern {
                     0, 0, 0, 0, 0, 0L);
         }
 
-        long start = System.currentTimeMillis();
         String answer = orchestrator.prompt()
                 .user(composeUserPrompt(project, team, specialistDefs))
                 .call()
                 .content();
-        long elapsed = System.currentTimeMillis() - start;
 
         telemetry.saveAgentMessage(project.id(), orchestratorDef.id(), "assistant", answer == null ? "" : answer);
+        // Latency comes from the advisor's running total — sum of every adviseCall's
+        // duration. Matches what specialists report (cumulative model-call time, not
+        // wall-clock including waits).
         telemetry.saveAgentState(project.id(), orchestratorDef.id(), orchestratorDef.name(), "STOPPED",
                 orchestratorBuilt.advisor().cycleCount(), orchestratorBuilt.advisor().messageCount(),
                 orchestratorBuilt.advisor().inputTokens(), orchestratorBuilt.advisor().outputTokens(),
-                orchestratorBuilt.advisor().totalTokens(), elapsed);
+                orchestratorBuilt.advisor().totalTokens(),
+                orchestratorBuilt.advisor().totalLatencyMs());
 
         var participants = new ArrayList<String>(specialistDefs.size() + 1);
         participants.add(orchestratorDef.id());
@@ -201,9 +203,16 @@ public class OrchestratorPattern {
                 // Telemetry: orchestrator → specialist delegation visible in the UI graph.
                 telemetry.saveAgentTransition(project.id(), UUID.randomUUID().toString(),
                         orchestratorDef.id(), def.id());
+                // WORKING carries running totals from the advisor — when a specialist is
+                // re-invoked (e.g. orchestrator's verifier retries after a prose reply),
+                // the UI card preserves the prior turn's tokens/cycles instead of flashing
+                // back to zero. The advisor accumulates across every adviseCall() call,
+                // so the values here are non-decreasing across the whole run.
                 telemetry.saveAgentState(project.id(), def.id(), def.name(), "WORKING",
-                        0, 0, 0, 0, 0, 0L);
-                long start = System.currentTimeMillis();
+                        specialist.advisor().cycleCount(), specialist.advisor().messageCount(),
+                        specialist.advisor().inputTokens(), specialist.advisor().outputTokens(),
+                        specialist.advisor().totalTokens(),
+                        specialist.advisor().totalLatencyMs());
                 try {
                     @SuppressWarnings("unchecked")
                     Map<String, Object> parsed = LENIENT.readValue(toolInput, Map.class);
@@ -229,10 +238,14 @@ public class OrchestratorPattern {
                     String detail = Throwables.rootMessage(e);
                     return "Error in %s (%s): %s".formatted(def.name(), def.role(), detail);
                 } finally {
+                    // STOPPED also uses the running total, not just this turn's duration.
+                    // If the orchestrator re-invokes the same specialist, the card shows
+                    // cumulative tokens/cycles/time across both turns.
                     telemetry.saveAgentState(project.id(), def.id(), def.name(), "STOPPED",
                             specialist.advisor().cycleCount(), specialist.advisor().messageCount(),
                             specialist.advisor().inputTokens(), specialist.advisor().outputTokens(),
-                            specialist.advisor().totalTokens(), System.currentTimeMillis() - start);
+                            specialist.advisor().totalTokens(),
+                            specialist.advisor().totalLatencyMs());
                 }
             }
         };

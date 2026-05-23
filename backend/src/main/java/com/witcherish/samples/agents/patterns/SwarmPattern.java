@@ -165,19 +165,23 @@ public class SwarmPattern {
 
             handoff.reset();
             BuiltAgent peer = built.get(current.id());
+            // WORKING reflects the peer's running totals — important when a peer takes
+            // multiple turns (re-handoff back to it) so the card never resets to zero.
             telemetry.saveAgentState(project.id(), current.id(), current.name(), "WORKING",
                     peer.advisor().cycleCount(), peer.advisor().messageCount(),
                     peer.advisor().inputTokens(), peer.advisor().outputTokens(),
-                    peer.advisor().totalTokens(), 0L);
-            long turnStart = System.currentTimeMillis();
+                    peer.advisor().totalTokens(),
+                    peer.advisor().totalLatencyMs());
             String reply = peer.client().prompt().user(userPrompt).call().content();
-            long turnElapsed = System.currentTimeMillis() - turnStart;
 
             telemetry.saveAgentMessage(project.id(), current.id(), "assistant", reply == null ? "" : reply);
+            // STOPPED also uses the running total. If the peer is re-invoked after a
+            // handoff cycle, both turns' tokens and latency stay visible.
             telemetry.saveAgentState(project.id(), current.id(), current.name(), "STOPPED",
                     peer.advisor().cycleCount(), peer.advisor().messageCount(),
                     peer.advisor().inputTokens(), peer.advisor().outputTokens(),
-                    peer.advisor().totalTokens(), turnElapsed);
+                    peer.advisor().totalTokens(),
+                    peer.advisor().totalLatencyMs());
 
             if (!handoff.requested) {
                 // Agent ended its turn without handing off — its reply is the final answer.

@@ -40,6 +40,8 @@ public class EventCaptureAdvisor implements CallAdvisor {
     private final AtomicLong inputTokens = new AtomicLong(0);
     private final AtomicLong outputTokens = new AtomicLong(0);
     private final AtomicLong totalTokens = new AtomicLong(0);
+    /** Cumulative wall-clock time spent inside model round-trips for this agent (ms). */
+    private final AtomicLong totalLatencyMs = new AtomicLong(0);
 
     public EventCaptureAdvisor(EventLog eventLog, String projectId, String agentId, String agentName) {
         this.eventLog = eventLog;
@@ -63,7 +65,9 @@ public class EventCaptureAdvisor implements CallAdvisor {
         eventLog.emit(AgentEvent.of(projectId, agentId, agentName, "BEFORE_MODEL_CALL",
                 request.prompt().getContents()));
 
+        long callStart = System.currentTimeMillis();
         ChatClientResponse response = chain.nextCall(request);
+        long callElapsed = System.currentTimeMillis() - callStart;
 
         ChatResponse chatResponse = response.chatResponse();
         String text = chatResponse != null
@@ -74,10 +78,12 @@ public class EventCaptureAdvisor implements CallAdvisor {
         eventLog.emit(AgentEvent.of(projectId, agentId, agentName, "AFTER_MODEL_CALL", text));
 
         // Aggregate counters. Each adviseCall is one round-trip to the model — bumps the
-        // cycle (and message) counter by 1, and pulls token deltas from the response
-        // metadata when the provider populated it.
+        // cycle (and message) counter by 1, pulls token deltas from the response metadata
+        // when the provider populated it, and accumulates wall-clock latency so the UI
+        // card shows a running total even between turns.
         cycleCount.incrementAndGet();
         messageCount.incrementAndGet();
+        totalLatencyMs.addAndGet(callElapsed);
         if (chatResponse != null && chatResponse.getMetadata() != null) {
             Usage usage = chatResponse.getMetadata().getUsage();
             if (usage != null) {
@@ -112,5 +118,14 @@ public class EventCaptureAdvisor implements CallAdvisor {
         // Fallback: some providers populate prompt+completion but not total.
         long sum = inputTokens.get() + outputTokens.get();
         return (int) Math.min(Integer.MAX_VALUE, sum);
+    }
+
+    /**
+     * Cumulative wall-clock time (in milliseconds) this agent has spent inside model
+     * round-trips so far. The UI card uses this as the running total — it never
+     * decreases, even between turns when the agent is idle waiting on peers.
+     */
+    public long totalLatencyMs() {
+        return totalLatencyMs.get();
     }
 }

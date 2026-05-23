@@ -159,19 +159,28 @@ public class GraphPattern {
             for (String upstream : incoming.get(nodeId)) {
                 telemetry.saveAgentTransition(project.id(), UUID.randomUUID().toString(), upstream, nodeId);
             }
-            telemetry.saveAgentState(project.id(), def.id(), def.name(), "WORKING",
-                    0, 0, 0, 0, 0, 0L);
 
-            long start = System.currentTimeMillis();
             BuiltAgent node = built.get(nodeId);
+            // WORKING preserves whatever totals the advisor already has — for a fresh
+            // node these are zeros, but the read pattern stays consistent across patterns.
+            telemetry.saveAgentState(project.id(), def.id(), def.name(), "WORKING",
+                    node.advisor().cycleCount(), node.advisor().messageCount(),
+                    node.advisor().inputTokens(), node.advisor().outputTokens(),
+                    node.advisor().totalTokens(),
+                    node.advisor().totalLatencyMs());
+
             String reply = node.client().prompt().user(nodePrompt).call().content();
             outputs.put(nodeId, reply == null ? "" : reply);
 
             telemetry.saveAgentMessage(project.id(), def.id(), "assistant", reply == null ? "" : reply);
+            // Latency uses the advisor's running total — sum of every model-call duration
+            // for this node. For a Graph node that's a single value but the read shape
+            // matches Mono / Orchestrator / Swarm.
             telemetry.saveAgentState(project.id(), def.id(), def.name(), "STOPPED",
                     node.advisor().cycleCount(), node.advisor().messageCount(),
                     node.advisor().inputTokens(), node.advisor().outputTokens(),
-                    node.advisor().totalTokens(), System.currentTimeMillis() - start);
+                    node.advisor().totalTokens(),
+                    node.advisor().totalLatencyMs());
         }
 
         // Sinks (no outgoing edges) carry the final deliverable. Multiple sinks are

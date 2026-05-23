@@ -65,20 +65,21 @@ public class MonoPattern {
         telemetry.saveAgentState(project.id(), def.id(), def.name(), "WORKING",
                 0, 0, 0, 0, 0, 0L);
 
-        long start = System.currentTimeMillis();
         String answer = agent.prompt()
                 .user(Prompts.composeMonoPrompt(project, team))
                 .call()
                 .content();
-        long elapsed = System.currentTimeMillis() - start;
 
         telemetry.saveAgentMessage(project.id(), def.id(), "assistant", answer == null ? "" : answer);
         // Pull real cycle/token aggregates from the advisor — Spring AI normalises Bedrock
-        // usage onto Usage#getPromptTokens / getCompletionTokens / getTotalTokens.
+        // usage onto Usage#getPromptTokens / getCompletionTokens / getTotalTokens. Latency
+        // is the advisor's running total of model-call wall-clock, so it matches what the
+        // multi-agent patterns report (cumulative across every adviseCall, not just the
+        // final turn).
         telemetry.saveAgentState(project.id(), def.id(), def.name(), "STOPPED",
                 built.advisor().cycleCount(), built.advisor().messageCount(),
                 built.advisor().inputTokens(), built.advisor().outputTokens(),
-                built.advisor().totalTokens(), elapsed);
+                built.advisor().totalTokens(), built.advisor().totalLatencyMs());
 
         QuestResult structured = structuredAnswer.coerce(answer);
         return new PatternResult("COMPLETED", "mono", def.id(), answer, List.of(def.id()), structured);
