@@ -24,6 +24,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Graph pattern — a deterministic DAG of agents.
@@ -34,6 +38,14 @@ import java.util.UUID;
  * once <em>every</em> direct predecessor has produced an output. Each node's prompt is
  * the original task plus a labelled block per upstream output — exactly the input
  * propagation Strands documents for graphs.
+ *
+ * <p><strong>Parallel sibling execution.</strong> Independent nodes (no shared dependency
+ * chain) run concurrently on virtual threads. The implementation walks Kahn's topological
+ * order in <em>batches</em>: every iteration finds the "ready set" — nodes whose
+ * dependencies are all satisfied — and dispatches them to a virtual-thread executor
+ * via {@link CompletableFuture#runAsync}. {@code allOf(...).join()} waits for the batch.
+ * This matches Strands' {@code _execute_nodes_parallel} but stays sequential-looking on
+ * the page thanks to JEP-444 virtual threads — no async/await colouring, no event queue.
  *
  * <p>Differences from {@link OrchestratorPattern}: there the LLM <em>chooses</em> who
  * runs next; here the <em>topology</em> chooses. That makes Graph the right primitive
@@ -141,7 +153,8 @@ public class GraphPattern {
         }
 
         String task = Prompts.composeUserPrompt(project, team);
-        Map<String, String> outputs = new LinkedHashMap<>();
+        // ConcurrentHashMap because sibling nodes write to it from virtual threads in parallel.
+        Map<String, String> outputs = new ConcurrentHashMap<>();
         log.info("[graph] order={} entrypoint={}", order, team.entrypoint());
 
         // Pre-mark every agent as READY so the UI renders the full DAG up front.
@@ -150,37 +163,35 @@ public class GraphPattern {
                     0, 0, 0, 0, 0, 0L);
         }
 
-        for (String nodeId : order) {
-            AgentDefinition def = defsById.get(nodeId);
-            String nodePrompt = composeNodePrompt(task, def, incoming.get(nodeId), defsById, outputs);
-            log.info("[graph] running node={} ({}), upstream={}", def.name(), nodeId, incoming.get(nodeId));
-
-            // Telemetry: each upstream → this node edge becomes a transition.
-            for (String upstream : incoming.get(nodeId)) {
-                telemetry.saveAgentTransition(project.id(), UUID.randomUUID().toString(), upstream, nodeId);
+        // Parallel batched execution, mirroring Strands' Graph._execute_nodes_parallel:
+        // 1. Find the next "ready batch" — every node whose dependencies are all in `outputs`.
+        // 2. Run every node in the batch concurrently on a virtual thread.
+        // 3. Wait for the batch, then loop until all nodes have produced output.
+        //
+        // Java 25 virtual threads keep the code shape identical to a sequential for-loop
+        // — no event-queue scaffolding, no cancellation dance, no async/await colouring.
+        // Each model call still parks the carrier thread on the underlying HTTP I/O.
+        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            Set<String> done = ConcurrentHashMap.newKeySet();
+            while (done.size() < order.size()) {
+                List<String> readyBatch = order.stream()
+                        .filter(id -> !done.contains(id))
+                        .filter(id -> done.containsAll(incoming.get(id)))
+                        .toList();
+                if (readyBatch.isEmpty()) {
+                    throw new IllegalStateException(
+                            "Graph stalled: no ready nodes but " + (order.size() - done.size())
+                                    + " remain. Cycle in connections?");
+                }
+                log.info("[graph] running batch (parallel)={}", readyBatch);
+                List<CompletableFuture<Void>> futures = readyBatch.stream()
+                        .map(nodeId -> CompletableFuture.runAsync(
+                                () -> runNode(nodeId, defsById, incoming, built, outputs, project, telemetry, task),
+                                pool))
+                        .toList();
+                CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new)).join();
+                done.addAll(readyBatch);
             }
-
-            BuiltAgent node = built.get(nodeId);
-            // WORKING preserves whatever totals the advisor already has — for a fresh
-            // node these are zeros, but the read pattern stays consistent across patterns.
-            telemetry.saveAgentState(project.id(), def.id(), def.name(), "WORKING",
-                    node.advisor().cycleCount(), node.advisor().messageCount(),
-                    node.advisor().inputTokens(), node.advisor().outputTokens(),
-                    node.advisor().totalTokens(),
-                    node.advisor().totalLatencyMs());
-
-            String reply = node.client().prompt().user(nodePrompt).call().content();
-            outputs.put(nodeId, reply == null ? "" : reply);
-
-            telemetry.saveAgentMessage(project.id(), def.id(), "assistant", reply == null ? "" : reply);
-            // Latency uses the advisor's running total — sum of every model-call duration
-            // for this node. For a Graph node that's a single value but the read shape
-            // matches Mono / Orchestrator / Swarm.
-            telemetry.saveAgentState(project.id(), def.id(), def.name(), "STOPPED",
-                    node.advisor().cycleCount(), node.advisor().messageCount(),
-                    node.advisor().inputTokens(), node.advisor().outputTokens(),
-                    node.advisor().totalTokens(),
-                    node.advisor().totalLatencyMs());
         }
 
         // Sinks (no outgoing edges) carry the final deliverable. Multiple sinks are
@@ -194,6 +205,44 @@ public class GraphPattern {
 
         QuestResult structured = structuredAnswer.coerce(finalAnswer);
         return new PatternResult("COMPLETED", "graph", team.entrypoint(), finalAnswer, order, structured);
+    }
+
+    /**
+     * Run one node: emit transitions + WORKING, invoke the model, persist the reply,
+     * emit STOPPED. Called from a virtual thread inside the parallel batch so two sibling
+     * nodes execute concurrently without colouring the call site as async.
+     */
+    private void runNode(String nodeId,
+                         Map<String, AgentDefinition> defsById,
+                         Map<String, Set<String>> incoming,
+                         Map<String, BuiltAgent> built,
+                         Map<String, String> outputs,
+                         Project project,
+                         Session telemetry,
+                         String task) {
+        AgentDefinition def = defsById.get(nodeId);
+        BuiltAgent node = built.get(nodeId);
+        String nodePrompt = composeNodePrompt(task, def, incoming.get(nodeId), defsById, outputs);
+        log.info("[graph] running node={} ({}), upstream={}", def.name(), nodeId, incoming.get(nodeId));
+
+        for (String upstream : incoming.get(nodeId)) {
+            telemetry.saveAgentTransition(project.id(), UUID.randomUUID().toString(), upstream, nodeId);
+        }
+        telemetry.saveAgentState(project.id(), def.id(), def.name(), "WORKING",
+                node.advisor().cycleCount(), node.advisor().messageCount(),
+                node.advisor().inputTokens(), node.advisor().outputTokens(),
+                node.advisor().totalTokens(),
+                node.advisor().totalLatencyMs());
+
+        String reply = node.client().prompt().user(nodePrompt).call().content();
+        outputs.put(nodeId, reply == null ? "" : reply);
+
+        telemetry.saveAgentMessage(project.id(), def.id(), "assistant", reply == null ? "" : reply);
+        telemetry.saveAgentState(project.id(), def.id(), def.name(), "STOPPED",
+                node.advisor().cycleCount(), node.advisor().messageCount(),
+                node.advisor().inputTokens(), node.advisor().outputTokens(),
+                node.advisor().totalTokens(),
+                node.advisor().totalLatencyMs());
     }
 
     /** Kahn's algorithm. Detects cycles and preserves agent-roster order for deterministic output. */
