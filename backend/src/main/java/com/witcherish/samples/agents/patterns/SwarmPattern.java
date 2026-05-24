@@ -54,6 +54,21 @@ public class SwarmPattern {
     private static final int MAX_ITERATIONS = 20;
 
     /**
+     * Ping-pong detection — the safety net that fires when peers loop on each other
+     * without making progress (e.g. Architect → Reviewer → Architect → Reviewer …).
+     * Mirrors Strands' {@code repetitive_handoff_detection_window} +
+     * {@code repetitive_handoff_min_unique_agents}. If the last {@value} peers in
+     * {@code nodeHistory} contain fewer than {@link #PING_PONG_MIN_UNIQUE} distinct
+     * agents, the swarm stops with the most recent reply as the final answer.
+     *
+     * <p>Strands defaults this to disabled (window=0). We default to <em>enabled</em>
+     * because a stream demo benefits from showing the guard fire when an LLM falls into
+     * a loop — pedagogy beats the slight loss of "let it run forever" flexibility.
+     */
+    private static final int PING_PONG_WINDOW = 4;
+    private static final int PING_PONG_MIN_UNIQUE = 3;
+
+    /**
      * Identical to the {@code SINGLE_HANDOFF_INSTRUCTION} the Python swarm patches into
      * the entrypoint's system prompt. Strands' SDK has a quirk where, if an agent calls
      * {@code handoff_to_agent} multiple times in one turn, only the last one wins — so we
@@ -195,6 +210,21 @@ public class SwarmPattern {
                 log.warn("[swarm] handoff cap ({}) reached — stopping with last reply", MAX_HANDOFFS);
                 finalAnswer = reply == null ? "" : reply;
                 break;
+            }
+
+            // Ping-pong guard: if the last PING_PONG_WINDOW peers contain fewer than
+            // PING_PONG_MIN_UNIQUE distinct agents, peers are bouncing on each other
+            // without making progress. Stop early instead of burning the full handoff
+            // budget on a loop. Mirrors Strands' repetitive-handoff detection.
+            if (nodeHistory.size() >= PING_PONG_WINDOW) {
+                long uniqueRecent = nodeHistory.subList(nodeHistory.size() - PING_PONG_WINDOW, nodeHistory.size())
+                        .stream().distinct().count();
+                if (uniqueRecent < PING_PONG_MIN_UNIQUE) {
+                    log.warn("[swarm] ping-pong detected ({} unique in last {}) — stopping",
+                            uniqueRecent, PING_PONG_WINDOW);
+                    finalAnswer = reply == null ? "" : reply;
+                    break;
+                }
             }
 
             AgentDefinition next = defsByName.get(handoff.targetName);
