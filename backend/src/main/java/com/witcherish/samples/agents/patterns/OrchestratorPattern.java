@@ -303,7 +303,7 @@ public class OrchestratorPattern {
                 2. Plan the build. Typically: architecture → frontend implementation → code review.
                 3. CALL each specialist tool one at a time, in a sensible order — wait for each response \
                 before the next. Do not describe what you would do; actually invoke the tools.
-                4. EVERY specialist tool call should include a `reasoning` argument with: \
+                4. EVERY specialist tool call SHOULD include a `reasoning` argument with: \
                 `innerThought` (one short sentence: why this specialist now), `confidence` (high/medium/low), \
                 and `memoryNotes` (key decisions to carry forward). This is shown to the user live.
                 5. VERIFY the Frontend specialist's reply: it MUST contain a URL ending in `/index.html`. \

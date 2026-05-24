@@ -82,7 +82,7 @@ public class WriteResultTool {
     private static final String WRITE_RESULT_DESCRIPTION =
             "Persist the project's deliverable as a single self-contained index.html. " +
             "Use this once you have the final HTML/CSS/JavaScript for the requested app. " +
-            "The 'content' parameter must be the entire HTML document, ready to render in a browser. " +
+            "The 'content' parameter MUST be the entire HTML document, ready to render in a browser. " +
             "Returns a URL the user can open to play the deliverable. " +
             "Call this tool exactly once at the end of the run. " +
             "Optionally include a 'reasoning' object with innerThought + confidence to show your work in the Adventure Log.";

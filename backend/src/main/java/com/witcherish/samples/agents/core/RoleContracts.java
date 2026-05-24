@@ -32,6 +32,26 @@ public final class RoleContracts {
 
     private RoleContracts() {}
 
+    /**
+     * RFC 2119 keyword preamble prepended to every shaped agent prompt. Names the RFC
+     * once so the LLM treats uppercase MUST / MUST NOT / SHOULD / SHOULD NOT / MAY in
+     * the role contract + pattern epilogue as normative directives, not casual prose.
+     *
+     * <p>Empirically: LLMs trained on technical documentation weight uppercase normative
+     * keywords noticeably higher than lowercase ones. Pinning the convention up front
+     * removes the ambiguity that makes weaker tool-using models (Haiku 4.5) treat polite
+     * "you should…" as soft suggestion rather than absolute requirement.
+     *
+     * @see <a href="https://datatracker.ietf.org/doc/html/rfc2119">RFC 2119 — Key words for use in RFCs to Indicate Requirement Levels</a>
+     */
+    private static final String RFC_2119_PREAMBLE = """
+
+            --- INTERPRETATION RULES (RFC 2119) ---
+            The key words MUST, MUST NOT, REQUIRED, SHALL, SHALL NOT, SHOULD, SHOULD NOT, \
+            RECOMMENDED, MAY, and OPTIONAL in the rules below are to be interpreted as \
+            described in RFC 2119 (https://datatracker.ietf.org/doc/html/rfc2119). When \
+            you see them in UPPERCASE, treat them as binding constraints — not casual prose.""";
+
     // ── Role contracts ────────────────────────────────────────────────────────
     //
     // Substring matchers (case-insensitive against role) — the seed data has small
@@ -180,6 +200,10 @@ public final class RoleContracts {
         if (def == null) return null;
         StringBuilder prompt = new StringBuilder();
         prompt.append(def.prompt() == null ? "" : def.prompt());
+        // Prepend the RFC 2119 preamble before any normative directive so the LLM treats
+        // uppercase keywords (MUST, MUST NOT, SHOULD, MAY, …) in the role contract +
+        // pattern epilogue as binding rather than casual prose.
+        prompt.append(RFC_2119_PREAMBLE);
         prompt.append(forRole(def.role()));
         prompt.append(forPattern(pattern, isEntrypoint));
         return new AgentDefinition(def.id(), def.name(), def.model(),
