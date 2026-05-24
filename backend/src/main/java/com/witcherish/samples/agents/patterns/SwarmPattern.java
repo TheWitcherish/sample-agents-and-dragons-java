@@ -254,8 +254,13 @@ public class SwarmPattern {
         List<String> participants = nodeHistory.stream()
                 .map(name -> idByName.getOrDefault(name, name))
                 .toList();
+        // Symmetric def map keyed by id (defsByName above is keyed by sanitised name —
+        // useful for handoff lookup, not for PatternResult).
+        Map<String, AgentDefinition> defsById = new LinkedHashMap<>();
+        team.agents().forEach(a -> defsById.put(a.id(), a));
         QuestResult structured = structuredAnswer.coerce(finalAnswer);
-        return new PatternResult("COMPLETED", "swarm", entrypointDef.id(), finalAnswer, participants, structured);
+        return PatternResult.from("swarm", entrypointDef.id(), finalAnswer, participants,
+                defsById, built, structured);
     }
 
     /**

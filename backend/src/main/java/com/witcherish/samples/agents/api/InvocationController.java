@@ -72,7 +72,13 @@ public class InvocationController {
             List<String> participants = payload.team().agents().stream().map(a -> a.id()).toList();
             String message = "Deliverable written to " + url
                     + ". (Note: Spring AI 1.1.3 strict-JSON quirk prevented the orchestrator's final summary turn — the deliverable itself succeeded.)";
-            return new PatternResult("COMPLETED", pattern, entrypointId, message, participants,
+            // Recovery path: no advisor data available (the throw came before STOPPED telemetry),
+            // so emit an empty nodes map + zero accumulators. The deliverable URL is what matters.
+            return new PatternResult(
+                    PatternResult.Status.COMPLETED, pattern, entrypointId, message, participants,
+                    java.util.Map.of(),
+                    PatternResult.Usage.ZERO,
+                    0L,
                     com.witcherish.samples.agents.api.dto.QuestResult.ok(message, url));
         }
     }

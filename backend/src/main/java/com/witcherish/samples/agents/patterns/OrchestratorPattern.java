@@ -23,6 +23,7 @@ import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -115,11 +116,17 @@ public class OrchestratorPattern {
         // behaves as an Orchestrator specialist — return text, do not delegate further).
         // Without the contracts, weaker tool-using models (Haiku 4.5) treat delegation
         // as conversational and respond with prose instead of fulfilling their role.
+        // Build each specialist once, keep its BuiltAgent in the team map so PatternResult
+        // can read per-node aggregates at the end. The same BuiltAgent is also wrapped
+        // into a ToolCallback so the orchestrator can invoke it.
+        Map<String, BuiltAgent> specialistsBuilt = new LinkedHashMap<>();
+        for (AgentDefinition spec : specialistDefs) {
+            specialistsBuilt.put(spec.id(), factory.buildOne(
+                    RoleContracts.shape(spec, RoleContracts.Pattern.ORCHESTRATOR, false),
+                    project, List.of(taskTools), List.of(writeResult)));
+        }
         List<ToolCallback> specialistTools = specialistDefs.stream()
-                .map(spec -> asTool(spec,
-                        factory.buildOne(
-                                RoleContracts.shape(spec, RoleContracts.Pattern.ORCHESTRATOR, false),
-                                project, List.of(taskTools), List.of(writeResult)),
+                .map(spec -> asTool(spec, specialistsBuilt.get(spec.id()),
                         project, telemetry, orchestratorDef))
                 .toList();
 
@@ -166,8 +173,21 @@ public class OrchestratorPattern {
         participants.add(orchestratorDef.id());
         specialistDefs.forEach(s -> participants.add(s.id()));
 
+        // Build the team map (def + BuiltAgent for orchestrator AND every specialist) so
+        // PatternResult.from() can produce a Strands-shaped MultiAgentResult equivalent
+        // — per-node usage + cycles + latency, plus accumulated totals across the run.
+        Map<String, AgentDefinition> teamDefs = new LinkedHashMap<>();
+        Map<String, BuiltAgent> teamBuilt = new LinkedHashMap<>();
+        teamDefs.put(orchestratorDef.id(), orchestratorDef);
+        teamBuilt.put(orchestratorDef.id(), orchestratorBuilt);
+        for (AgentDefinition spec : specialistDefs) {
+            teamDefs.put(spec.id(), spec);
+            teamBuilt.put(spec.id(), specialistsBuilt.get(spec.id()));
+        }
+
         QuestResult structured = structuredAnswer.coerce(answer);
-        return new PatternResult("COMPLETED", "orchestrator", orchestratorDef.id(), answer, participants, structured);
+        return PatternResult.from("orchestrator", orchestratorDef.id(), answer,
+                participants, teamDefs, teamBuilt, structured);
     }
 
     /**

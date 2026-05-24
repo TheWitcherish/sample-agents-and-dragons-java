@@ -204,7 +204,8 @@ public class GraphPattern {
                 : sinks.stream().map(outputs::get).reduce((a, b) -> a + "\n\n" + b).orElse("");
 
         QuestResult structured = structuredAnswer.coerce(finalAnswer);
-        return new PatternResult("COMPLETED", "graph", team.entrypoint(), finalAnswer, order, structured);
+        return PatternResult.from("graph", team.entrypoint(), finalAnswer, order,
+                defsById, built, structured);
     }
 
     /**

@@ -45,7 +45,9 @@ public class PatternDispatcher {
                     default -> throw new IllegalArgumentException("Unknown pattern: " + pattern);
                 };
                 String url = result.result() != null ? result.result().deliverableUrl() : null;
-                session.saveProjectState(projectId, result.status(), url);
+                // result.status() is the typed PatternResult.Status enum (Strands-shaped);
+                // the MCP save_project_state schema accepts a string, so we serialise here.
+                session.saveProjectState(projectId, result.status().name(), url);
                 return result;
             } catch (RuntimeException e) {
                 session.saveProjectState(projectId, "ON_ERROR", null);

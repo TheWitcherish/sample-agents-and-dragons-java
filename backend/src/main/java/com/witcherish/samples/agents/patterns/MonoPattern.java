@@ -82,6 +82,9 @@ public class MonoPattern {
                 built.advisor().totalTokens(), built.advisor().totalLatencyMs());
 
         QuestResult structured = structuredAnswer.coerce(answer);
-        return new PatternResult("COMPLETED", "mono", def.id(), answer, List.of(def.id()), structured);
+        return PatternResult.from("mono", def.id(), answer, List.of(def.id()),
+                java.util.Map.of(def.id(), def),
+                java.util.Map.of(def.id(), built),
+                structured);
     }
 }
