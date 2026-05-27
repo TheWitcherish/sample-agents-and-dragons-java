@@ -72,6 +72,29 @@ public final class RoleContracts {
             markdown explanations. If you respond with anything other than a \
             `writeResult` call, the run fails.""";
 
+    /**
+     * Graph-mode override of {@link #FRONTEND_UI_CONTRACT}.
+     *
+     * <p>In a Graph DAG the Frontend node's output flows to a downstream Code Reviewer node
+     * as a labelled block of upstream context. A {@code writeResult} URL is not reviewable;
+     * the reviewer needs the HTML source. So in Graph mode we invert the rule: emit the
+     * complete {@code index.html} as the reply text, do NOT call {@code writeResult}. The
+     * GraphPattern persists the final sink output via writeResult after the DAG completes.
+     */
+    private static final String FRONTEND_UI_GRAPH_CONTRACT = """
+
+            --- ROLE CONTRACT: Frontend UI Developer (Graph node) ---
+            You are a Graph node whose output flows to a downstream Code Reviewer. Your \
+            reply MUST be the complete, self-contained `index.html` document as raw text \
+            — starting with `<!DOCTYPE html>` and ending with `</html>`. Single file: all \
+            CSS in <style> tags, all JavaScript in <script> tags, no external URLs. \
+            Implement EVERY feature in the brief — no `TODO` placeholders, no stub \
+            functions. Do NOT call `writeResult`; the framework persists the final \
+            deliverable for you after the DAG completes. Do NOT wrap the HTML in markdown \
+            code fences (```html). Do NOT add prose preambles like "Here's the code:" — \
+            the downstream reviewer will treat any non-HTML lines as part of the artefact. \
+            Begin your reply with `<!DOCTYPE html>` on the first line.""";
+
     private static final String CODE_REVIEWER_CONTRACT = """
 
             --- ROLE CONTRACT: Code Reviewer ---
@@ -164,11 +187,13 @@ public final class RoleContracts {
 
             --- PATTERN: Graph (you are a node) ---
             You are one node in a deterministic DAG. Your output flows downstream to other \
-            nodes as a labelled block. Produce output that downstream nodes can integrate \
-            mechanically — bullet points, structured spec sections, or (for Frontend UI) \
-            a complete index.html via `writeResult`. Do NOT delegate; nodes do not call \
-            other nodes. Do NOT reference upstream nodes by name in your output prose; \
-            the framework already labels your output for downstream consumers.""";
+            nodes as a labelled block of upstream context. Produce output that downstream \
+            nodes can integrate mechanically — bullet points, structured spec sections, or \
+            (for Frontend UI) raw HTML source. Do NOT call `writeResult` from inside a Graph \
+            node; the framework persists the final sink output for you after the DAG \
+            completes. Do NOT delegate; nodes do not call other nodes. Do NOT reference \
+            upstream nodes by name in your output prose; the framework already labels your \
+            output for downstream consumers.""";
 
     private static final String SWARM_PEER_EPILOGUE = """
 
@@ -204,7 +229,7 @@ public final class RoleContracts {
         // uppercase keywords (MUST, MUST NOT, SHOULD, MAY, …) in the role contract +
         // pattern epilogue as binding rather than casual prose.
         prompt.append(RFC_2119_PREAMBLE);
-        prompt.append(forRole(def.role()));
+        prompt.append(forRole(def.role(), pattern));
         prompt.append(forPattern(pattern, isEntrypoint));
         return new AgentDefinition(def.id(), def.name(), def.model(),
                 prompt.toString(), def.role(), def.tools());
@@ -212,9 +237,20 @@ public final class RoleContracts {
 
     /** Look up the role contract for an arbitrary role string. Returns {@code ""} for unknown roles. */
     public static String forRole(String role) {
+        return forRole(role, null);
+    }
+
+    /**
+     * Pattern-aware role contract lookup. Frontend UI gets a Graph-specific contract that
+     * emits HTML inline (so a downstream reviewer can read it) instead of via writeResult.
+     * Other roles are pattern-agnostic.
+     */
+    public static String forRole(String role, Pattern pattern) {
         if (role == null) return "";
         String normalized = role.toLowerCase(Locale.ROOT);
-        if (normalized.contains("frontend"))               return FRONTEND_UI_CONTRACT;
+        if (normalized.contains("frontend")) {
+            return pattern == Pattern.GRAPH ? FRONTEND_UI_GRAPH_CONTRACT : FRONTEND_UI_CONTRACT;
+        }
         if (normalized.contains("code reviewer")
                 || normalized.contains("reviewer"))        return CODE_REVIEWER_CONTRACT;
         if (normalized.contains("game logic architect")

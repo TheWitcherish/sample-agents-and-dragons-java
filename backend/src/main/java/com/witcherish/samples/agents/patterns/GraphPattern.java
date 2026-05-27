@@ -11,16 +11,17 @@ import com.witcherish.samples.agents.core.AgentFactory.BuiltAgent;
 import com.witcherish.samples.agents.core.RoleContracts;
 import com.witcherish.samples.agents.telemetry.McpTelemetryPublisher.Session;
 import com.witcherish.samples.agents.tools.TaskToolsFactory;
+import com.witcherish.samples.agents.tools.WriteResultTool;
 import com.witcherish.samples.agents.tools.WriteResultToolFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -137,19 +138,19 @@ public class GraphPattern {
 
         List<String> order = topoSort(defsById.keySet(), outgoing, incoming);
 
-        // Each agent gets the same writeResult + TaskTools surface as the other patterns,
-        // so a node can persist a deliverable when its prompt asks it to. We keep the
-        // BuiltAgent map so each node's STOPPED telemetry pulls real token/cycle counts.
-        ToolCallback writeResult = writeResultToolFactory.build(project, config, telemetry).asToolCallback();
+        // Graph nodes do NOT get writeResult — its returnDirect=true behaviour replaces the
+        // node's reply with a URL string, which is unreviewable by a downstream Code Reviewer
+        // (or any other persona) node. The framework persists the most-downstream HTML output
+        // via writeResult after the DAG completes (see persistDeliverable below). Each node's
+        // prompt is shaped with the Graph-aware role contract + node epilogue so the Frontend
+        // role emits raw HTML as its reply rather than calling writeResult.
+        WriteResultTool writeResult = writeResultToolFactory.build(project, config, telemetry);
         var taskTools = taskToolsFactory.build(project.id(), telemetry);
-        // Each node's prompt is shaped with its role contract + the Graph node epilogue
-        // so nodes return downstream-friendly structured output (or a writeResult URL,
-        // for Frontend nodes) rather than wandering into prose.
         Map<String, BuiltAgent> built = new LinkedHashMap<>();
         for (AgentDefinition def : defsById.values()) {
             built.put(def.id(), factory.buildOne(
                     RoleContracts.shape(def, RoleContracts.Pattern.GRAPH, false),
-                    project, List.of(taskTools), List.of(writeResult)));
+                    project, List.of(taskTools), List.of()));
         }
 
         String task = Prompts.composeUserPrompt(project, team);
@@ -199,9 +200,19 @@ public class GraphPattern {
         List<String> sinks = order.stream()
                 .filter(id -> outgoing.get(id).isEmpty())
                 .toList();
-        String finalAnswer = sinks.isEmpty()
+        String sinkAnswer = sinks.isEmpty()
                 ? outputs.get(order.get(order.size() - 1))
                 : sinks.stream().map(outputs::get).reduce((a, b) -> a + "\n\n" + b).orElse("");
+
+        // Persist the deliverable for the user. Walk the topo order in REVERSE so the most
+        // downstream HTML producer wins (latest version after any in-DAG iteration). We
+        // accept any node whose output is recognisable HTML — usually the Frontend UI, but
+        // a different persona could play that role on a custom team.
+        String html = findHtmlOutput(order, outputs);
+        String deliverableUrl = (html == null) ? null : persistDeliverable(writeResult, html);
+        String finalAnswer = (deliverableUrl == null)
+                ? sinkAnswer
+                : "Deliverable: " + deliverableUrl + "\n\n" + sinkAnswer;
 
         QuestResult structured = structuredAnswer.coerce(finalAnswer);
         return PatternResult.from("graph", team.entrypoint(), finalAnswer, order,
@@ -244,6 +255,55 @@ public class GraphPattern {
                 node.advisor().inputTokens(), node.advisor().outputTokens(),
                 node.advisor().totalTokens(),
                 node.advisor().totalLatencyMs());
+    }
+
+    /**
+     * Find the most-downstream node whose output is a complete HTML document. Walks the
+     * topological order in reverse so the latest producer wins. Strips an optional ```html
+     * code fence the model sometimes adds despite the contract telling it not to.
+     */
+    private static String findHtmlOutput(List<String> order, Map<String, String> outputs) {
+        for (int i = order.size() - 1; i >= 0; i--) {
+            String raw = outputs.get(order.get(i));
+            if (raw == null) continue;
+            String stripped = stripFence(raw).strip();
+            String lower = stripped.toLowerCase(Locale.ROOT);
+            if (lower.startsWith("<!doctype html") || lower.startsWith("<html")) {
+                return stripped;
+            }
+        }
+        return null;
+    }
+
+    private static String stripFence(String s) {
+        String t = s.strip();
+        if (t.startsWith("```")) {
+            int firstNl = t.indexOf('\n');
+            if (firstNl > 0) t = t.substring(firstNl + 1);
+            if (t.endsWith("```")) t = t.substring(0, t.length() - 3);
+        }
+        return t;
+    }
+
+    /**
+     * Persist the deliverable via {@link WriteResultTool}. Returns the URL on success or
+     * {@code null} if the write failed — failure is logged but does not break the run, the
+     * sink's text answer is still returned to the caller.
+     */
+    private String persistDeliverable(WriteResultTool tool, String html) {
+        try {
+            // doWrite returns "Successfully wrote deliverable to <url>" — extract the URL.
+            String result = tool.writeResult(html, null);
+            if (result.startsWith("Successfully wrote")) {
+                int urlStart = result.lastIndexOf(' ');
+                if (urlStart > 0) return result.substring(urlStart + 1);
+            }
+            log.warn("[graph] writeResult did not return a success URL: {}", result);
+            return null;
+        } catch (Exception e) {
+            log.error("[graph] failed to persist final deliverable", e);
+            return null;
+        }
     }
 
     /** Kahn's algorithm. Detects cycles and preserves agent-roster order for deterministic output. */
