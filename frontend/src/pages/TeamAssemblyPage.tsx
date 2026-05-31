@@ -346,8 +346,8 @@ const TeamAssemblyPage: React.FC = () => {
             >
               <option value="">Select pattern...</option>
               <option value="mono">Mono</option>
-              <option value="orchestrator">Orchestrator</option>
               <option value="graph">Graph</option>
+              <option value="orchestrator">Orchestrator</option>
               <option value="swarm">Swarm</option>
             </select>
           </div>
