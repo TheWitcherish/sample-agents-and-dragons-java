@@ -198,11 +198,42 @@ public final class RoleContracts {
     private static final String SWARM_PEER_EPILOGUE = """
 
             --- PATTERN: Swarm (you are a peer) ---
-            You can either (a) deliver your role's output and stop, or (b) call \
-            `handoff_to_agent` to pass control to a peer better suited for the next step. \
-            Never both — `handoff_to_agent` is `returnDirect=true`, so calling it ends \
-            your turn immediately. Pass useful context in the handoff `context` field; \
-            the receiving peer sees it in their input.""";
+            This quest is a TEAM effort: every peer in the roster MUST contribute before \
+            the deliverable ships. Your input lists the peers who have NOT yet been \
+            consulted. While that list is non-empty you MUST call `handoff_to_agent` to \
+            pass control to one of them — do NOT attempt to finish the quest or call \
+            `writeResult` yourself (it will be REJECTED until every peer has contributed). \
+            Do your role's work, then hand off the running result (HTML, spec, or review \
+            notes) to the next unconsulted peer via the `context` field. Only when no \
+            peer remains unconsulted may the designated shipper call `writeResult`. \
+            `handoff_to_agent` is `returnDirect=true`, so calling it ends your turn \
+            immediately — call it exactly once and stop.""";
+
+    /**
+     * Entrypoint variant of {@link #SWARM_PEER_EPILOGUE}. The user designates one agent as
+     * the swarm entrypoint in the frontend; that agent must behave as the coordinator that
+     * kicks off discovery of the WHOLE team rather than shipping a one-agent answer.
+     *
+     * <p>This epilogue is appended <em>after</em> the role contract (see {@link #shape}), so
+     * it deliberately overrides any role-level "your ONLY successful response is writeResult"
+     * directive (e.g. {@link #FRONTEND_UI_CONTRACT}) for the entrypoint: in a swarm the
+     * entrypoint routes first and ships last (or never, if a peer is the shipper).
+     */
+    private static final String SWARM_ENTRYPOINT_EPILOGUE = """
+
+            --- PATTERN: Swarm (you are the ENTRYPOINT / coordinator) ---
+            You start the quest, but you do NOT finish it alone. Your input lists the full \
+            team roster and which peers have NOT yet been consulted. The quest is bigger \
+            than any single role: each specialist MUST contribute before the deliverable \
+            ships. Therefore, on your FIRST turn you MUST call `handoff_to_agent` to the \
+            peer best suited for the first step (usually the planner / architect), passing \
+            the COMPLETE user request in the `message` field. Even if your own role \
+            contract above says your only output is a `writeResult` call, in this swarm you \
+            MUST hand off first — calling `writeResult` while any peer is still unconsulted \
+            is REJECTED by the framework and wastes a turn. Route the work through every \
+            peer (architect → implementer → analyst → reviewer, or whatever order fits the \
+            quest); the shipper calls `writeResult` only after the unconsulted list is \
+            empty. Do not summarise or plan in prose — hand off and let the team build.""";
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -269,7 +300,7 @@ public final class RoleContracts {
             case MONO         -> MONO_EPILOGUE;
             case ORCHESTRATOR -> isEntrypoint ? ORCHESTRATOR_BOSS_EPILOGUE : ORCHESTRATOR_SPECIALIST_EPILOGUE;
             case GRAPH        -> GRAPH_NODE_EPILOGUE;
-            case SWARM        -> SWARM_PEER_EPILOGUE;
+            case SWARM        -> isEntrypoint ? SWARM_ENTRYPOINT_EPILOGUE : SWARM_PEER_EPILOGUE;
         };
     }
 }

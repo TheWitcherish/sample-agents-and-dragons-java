@@ -23,8 +23,10 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -132,25 +134,50 @@ public class SwarmPattern {
         ToolCallback writeResult = writeResultToolFactory.build(project, config, telemetry).asToolCallback();
         var taskTools = taskToolsFactory.build(project.id(), telemetry);
 
+        // The whole reason this pattern exists is to show the WHOLE team collaborate. Left
+        // to its own devices a capable model will have the entrypoint build-and-ship on turn
+        // one (1 agent) or architect→frontend then stop (2 agents), so the other specialists
+        // never light up. `consulted` tracks which peers have actually taken a turn; the
+        // ShipGate refuses writeResult until that set covers the entire roster, and the loop
+        // forces a handoff to the next unconsulted peer whenever an agent tries to finish early.
+        Set<String> consulted = new LinkedHashSet<>();
+        ShipGate shipGate = new ShipGate(writeResult, team.agents(), consulted);
+        ToolCallback gatedWriteResult = shipGate.asToolCallback();
+
         // Build one BuiltAgent per agent (ChatClient + advisor). Each agent's tool surface =
-        // TaskTools, writeResult, and a per-agent handoff_to_agent tool (Strands injects
-        // this automatically). The advisor lets us publish per-peer token/cycle counts
+        // TaskTools, the gated writeResult, and a per-agent handoff_to_agent tool (Strands
+        // injects this automatically). The advisor lets us publish per-peer token/cycle counts
         // when the peer's turn ends.
         Map<String, BuiltAgent> built = new LinkedHashMap<>();
         for (AgentDefinition def : team.agents()) {
             ToolCallback handoffTool = buildHandoffTool(def, defsByName, handoff);
+            boolean isEntry = def.id().equals(entrypointDef.id());
             // Layer 1: shape each peer with its role contract + swarm-peer pattern epilogue.
+            // The entrypoint gets the coordinator epilogue (route first, ship last) which
+            // deliberately overrides any role-level "your ONLY output is writeResult" rule.
             // Layer 2: the entrypoint also gets SINGLE_HANDOFF_INSTRUCTION (Strands quirk —
             // multiple handoffs in one turn collapse to the last one).
-            AgentDefinition shaped = RoleContracts.shape(def, RoleContracts.Pattern.SWARM, false);
-            if (def.id().equals(entrypointDef.id())) {
+            AgentDefinition shaped = RoleContracts.shape(def, RoleContracts.Pattern.SWARM, isEntry);
+            if (isEntry) {
                 shaped = new AgentDefinition(shaped.id(), shaped.name(), shaped.model(),
                         shaped.prompt() + SINGLE_HANDOFF_INSTRUCTION,
                         shaped.role(), shaped.tools());
             }
             built.put(def.id(), factory.buildOne(shaped, project,
-                    List.of(taskTools), List.of(writeResult, handoffTool)));
+                    List.of(taskTools), List.of(gatedWriteResult, handoffTool)));
         }
+
+        // Whoever ships the deliverable once the roster is exhausted. Prefer a Frontend UI
+        // peer (its role contract ends in a writeResult call); fall back to the entrypoint.
+        AgentDefinition shipper = team.agents().stream()
+                .filter(a -> a.role() != null && a.role().toLowerCase().contains("frontend"))
+                .findFirst()
+                .orElse(entrypointDef);
+
+        // Keyed by id (defsByName above is keyed by sanitised name, for handoff target
+        // lookup). The loop needs id-keyed access for forced routing through unconsulted peers.
+        Map<String, AgentDefinition> defsById = new LinkedHashMap<>();
+        team.agents().forEach(a -> defsById.put(a.id(), a));
 
         String task = Prompts.composeUserPrompt(project, team);
         List<String> nodeHistory = new ArrayList<>();
@@ -161,6 +188,7 @@ public class SwarmPattern {
         String finalAnswer = "";
         int iterations = 0;
         int handoffCount = 0;
+        int shipNudges = 0;                      // bounded retries to coax the shipper to ship
 
         log.info("[swarm] entrypoint={} team={}", entrypointDef.name(),
                 team.agents().stream().map(AgentDefinition::name).toList());
@@ -175,7 +203,7 @@ public class SwarmPattern {
             iterations++;
             nodeHistory.add(current.name());
             String userPrompt = composeNodeInput(task, current, defsByName, nodeHistory,
-                    sharedKnowledge, pendingMessage);
+                    sharedKnowledge, pendingMessage, consulted);
             log.info("[swarm] iter={} running={} ({})", iterations, current.name(), current.id());
 
             handoff.reset();
@@ -198,9 +226,55 @@ public class SwarmPattern {
                     peer.advisor().totalTokens(),
                     peer.advisor().totalLatencyMs());
 
+            // This peer has now contributed — record it so the ShipGate and the
+            // forced-routing logic below can tell who is still missing from the roster.
+            consulted.add(current.id());
+
             if (!handoff.requested) {
-                // Agent ended its turn without handing off — its reply is the final answer.
-                log.info("[swarm] iter={} {} produced final answer (no handoff)", iterations, current.name());
+                // The agent ended its turn without handing off. Before we accept its reply
+                // as the quest's final answer, make sure the WHOLE team has contributed —
+                // that's the point of the swarm. If peers remain unconsulted, force control
+                // to the next one (a fresh turn, which also sidesteps the returnDirect quirk
+                // that prevents re-prompting in the same turn).
+                AgentDefinition nextUnconsulted = team.agents().stream()
+                        .filter(a -> !consulted.contains(a.id()))
+                        .findFirst()
+                        .orElse(null);
+                if (nextUnconsulted != null) {
+                    log.info("[swarm] iter={} {} tried to finish but {} peer(s) unconsulted — routing to {}",
+                            iterations, current.name(),
+                            team.agents().size() - consulted.size(), nextUnconsulted.name());
+                    if (reply != null && !reply.isBlank()) {
+                        sharedKnowledge.put(current.name(), reply);  // carry the WIP forward
+                    }
+                    telemetry.saveAgentTransition(project.id(), UUID.randomUUID().toString(),
+                            current.id(), nextUnconsulted.id());
+                    pendingMessage = "Continue the quest. Previous agent (" + current.name()
+                            + ") produced the work in shared knowledge. Do your specialist part, "
+                            + "then hand off to the next peer.";
+                    current = nextUnconsulted;
+                    continue;
+                }
+                // Every peer has contributed but nobody shipped. If the shipper hasn't been
+                // given its final turn yet, route to it once to call writeResult (now that
+                // the gate is open). Bounded by shipNudges so a stubborn model can't loop.
+                if (!current.id().equals(shipper.id()) && shipNudges < 2) {
+                    shipNudges++;
+                    log.info("[swarm] roster exhausted, no deliverable yet — routing to shipper {} (nudge {})",
+                            shipper.name(), shipNudges);
+                    if (reply != null && !reply.isBlank()) {
+                        sharedKnowledge.put(current.name(), reply);
+                    }
+                    telemetry.saveAgentTransition(project.id(), UUID.randomUUID().toString(),
+                            current.id(), shipper.id());
+                    pendingMessage = "Every peer has contributed. You are the shipper: assemble the "
+                            + "final deliverable from the shared knowledge and call writeResult now.";
+                    current = shipper;
+                    continue;
+                }
+                // Whole team consulted (and shipper had its turn) — accept the final answer.
+                log.info("[swarm] iter={} {} produced final answer (no handoff, roster complete)",
+                        iterations, current.name());
                 finalAnswer = reply == null ? "" : reply;
                 break;
             }
@@ -254,10 +328,8 @@ public class SwarmPattern {
         List<String> participants = nodeHistory.stream()
                 .map(name -> idByName.getOrDefault(name, name))
                 .toList();
-        // Symmetric def map keyed by id (defsByName above is keyed by sanitised name —
-        // useful for handoff lookup, not for PatternResult).
-        Map<String, AgentDefinition> defsById = new LinkedHashMap<>();
-        team.agents().forEach(a -> defsById.put(a.id(), a));
+        // defsById (keyed by id) was built before the loop for forced-routing lookups;
+        // reused here for PatternResult.
         QuestResult structured = structuredAnswer.coerce(finalAnswer);
         return PatternResult.from("swarm", entrypointDef.id(), finalAnswer, participants,
                 defsById, built, structured);
@@ -326,7 +398,8 @@ public class SwarmPattern {
                                            Map<String, AgentDefinition> defsByName,
                                            List<String> nodeHistory,
                                            Map<String, String> sharedKnowledge,
-                                           String pendingMessage) {
+                                           String pendingMessage,
+                                           Set<String> consulted) {
         StringBuilder sb = new StringBuilder();
         if (pendingMessage != null && !pendingMessage.isBlank()) {
             sb.append("Handoff Message: ").append(pendingMessage).append("\n\n");
@@ -349,8 +422,28 @@ public class SwarmPattern {
                 .forEach(d -> sb.append("- ").append(sanitize(d.name()))
                         .append(" (").append(d.role()).append("): ")
                         .append(d.name()).append('\n'));
-        sb.append("\nYou have access to swarm coordination tools if you need help from other agents. "
-                + "If your turn finishes the task, reply with the final answer and DO NOT call handoff_to_agent.");
+
+        // The routing driver: list the peers who have NOT yet taken a turn. The prompts
+        // (RoleContracts swarm epilogues) instruct agents to hand off to one of these while
+        // the list is non-empty, and the ShipGate enforces it by rejecting writeResult.
+        List<String> notConsulted = defsByName.values().stream()
+                .filter(d -> !consulted.contains(d.id()))
+                .filter(d -> !d.id().equals(current.id()))
+                .map(d -> sanitize(d.name()))
+                .toList();
+        sb.append('\n');
+        if (notConsulted.isEmpty()) {
+            sb.append("ALL peers have now contributed. The team is complete — the deliverable "
+                    + "may be shipped. If you are the shipper, assemble the final result from the "
+                    + "shared knowledge above and call writeResult now. Otherwise reply with the "
+                    + "final answer.");
+        } else {
+            sb.append("Peers NOT yet consulted (you MUST hand off to one of these before the "
+                    + "quest can ship): ").append(String.join(", ", notConsulted)).append(".\n");
+            sb.append("Do your specialist part, then call handoff_to_agent to one of the "
+                    + "unconsulted peers, passing your work in the `context` field. Do NOT call "
+                    + "writeResult yet — it will be rejected until every peer has contributed.");
+        }
         return sb.toString();
     }
 
@@ -377,6 +470,53 @@ public class SwarmPattern {
             targetName = null;
             message = null;
             context = null;
+        }
+    }
+
+    /**
+     * Wraps the real {@code writeResult} {@link ToolCallback} and gates it behind the
+     * "whole team must contribute" rule. While any peer is still missing from
+     * {@code consulted}, a {@code writeResult} call writes nothing and returns a message
+     * telling the model to hand off instead. Once every peer has taken a turn, the call
+     * passes straight through to the delegate.
+     *
+     * <p>The wrapper keeps the delegate's tool name ({@code writeResult}) and
+     * {@code returnDirect=true} metadata, so the model's tool surface is identical to the
+     * un-gated tool — the gate is invisible except for the rejection message.
+     */
+    private static final class ShipGate {
+        private final ToolCallback delegate;
+        private final List<AgentDefinition> roster;
+        private final Set<String> consulted;
+
+        ShipGate(ToolCallback delegate, List<AgentDefinition> roster, Set<String> consulted) {
+            this.delegate = delegate;
+            this.roster = roster;
+            this.consulted = consulted;
+        }
+
+        ToolCallback asToolCallback() {
+            ToolDefinition definition = delegate.getToolDefinition();
+            ToolMetadata metadata = delegate.getToolMetadata();
+            return new ToolCallback() {
+                @Override public ToolDefinition getToolDefinition() { return definition; }
+                @Override public ToolMetadata   getToolMetadata()   { return metadata; }
+                @Override public String call(String toolInput) {
+                    List<String> missing = roster.stream()
+                            .filter(a -> !consulted.contains(a.id()))
+                            .map(AgentDefinition::name)
+                            .toList();
+                    if (!missing.isEmpty()) {
+                        log.info("[swarm] writeResult blocked — {} peer(s) not yet consulted: {}",
+                                missing.size(), missing);
+                        return "writeResult REJECTED: the quest is a team effort and these peers "
+                                + "have not contributed yet: " + String.join(", ", missing)
+                                + ". Call handoff_to_agent to pass control to one of them instead. "
+                                + "Do NOT call writeResult again until every peer has taken a turn.";
+                    }
+                    return delegate.call(toolInput);
+                }
+            };
         }
     }
 }

@@ -23,9 +23,11 @@ import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -125,9 +127,15 @@ public class OrchestratorPattern {
                     RoleContracts.shape(spec, RoleContracts.Pattern.ORCHESTRATOR, false),
                     project, List.of(taskTools), List.of(writeResult)));
         }
+        // Tool names must be unique: two specialists with the same role/name string would
+        // otherwise sanitize to the same Bedrock tool name, and the orchestrator could only
+        // ever reach one of them. Resolve collisions by suffixing the agent id, mirroring
+        // the MCP `server___tool` prefixing convention. The roster prompt and the
+        // ToolDefinition both read from this map so they always agree.
+        Map<String, String> toolNames = uniqueToolNames(specialistDefs);
         List<ToolCallback> specialistTools = specialistDefs.stream()
                 .map(spec -> asTool(spec, specialistsBuilt.get(spec.id()),
-                        project, telemetry, orchestratorDef))
+                        project, telemetry, orchestratorDef, toolNames.get(spec.id())))
                 .toList();
 
         // The orchestrator gets every specialist tool plus writeResult itself. Its prompt
@@ -155,7 +163,7 @@ public class OrchestratorPattern {
         }
 
         String answer = orchestrator.prompt()
-                .user(composeUserPrompt(project, team, specialistDefs))
+                .user(composeUserPrompt(project, team, specialistDefs, toolNames))
                 .call()
                 .content();
 
@@ -200,10 +208,11 @@ public class OrchestratorPattern {
      * into a formatted message so one specialist failure doesn't abort the whole run.
      */
     private ToolCallback asTool(AgentDefinition def, BuiltAgent specialist,
-                                Project project, Session telemetry, AgentDefinition orchestratorDef) {
+                                Project project, Session telemetry, AgentDefinition orchestratorDef,
+                                String toolName) {
         ChatClient specialistClient = specialist.client();
         ToolDefinition definition = ToolDefinition.builder()
-                .name(sanitize(def.name()))
+                .name(toolName)
                 // Strands-style: describe what the specialist DOES, not how to call it.
                 .description(("""
                         Process and respond to %s-related sub-tasks. Use this tool whenever the project requires \
@@ -274,13 +283,14 @@ public class OrchestratorPattern {
     /**
      * Compose the orchestrator's user prompt: project goal + routing table + procedure.
      */
-    private static String composeUserPrompt(Project project, Team team, List<AgentDefinition> specialists) {
+    private static String composeUserPrompt(Project project, Team team, List<AgentDefinition> specialists,
+                                            Map<String, String> toolNames) {
         if (specialists.isEmpty()) {
             return Prompts.composeUserPrompt(project, team);
         }
         String roster = specialists.stream()
                 .map(s -> "- For %s sub-tasks → CALL the `%s` tool (specialist: %s).".formatted(
-                        s.role(), sanitize(s.name()), s.name()))
+                        s.role(), toolNames.get(s.id()), s.name()))
                 .reduce((a, b) -> a + "\n" + b)
                 .orElse("");
 
@@ -307,11 +317,12 @@ public class OrchestratorPattern {
                 `innerThought` (one short sentence: why this specialist now), `confidence` (high/medium/low), \
                 and `memoryNotes` (key decisions to carry forward). This is shown to the user live.
                 5. VERIFY the Frontend specialist's reply: it MUST contain a URL ending in `/index.html`. \
-                If it returned prose instead (e.g. "I'll create..."), call the SAME Frontend specialist \
-                AGAIN with a stricter query like: "STOP. Call writeResult NOW with the complete \
-                self-contained index.html. Do not respond with prose. The user is waiting for the URL." \
-                If it still fails after a second attempt, call `writeResult` yourself with the best \
-                implementation you can produce inline.
+                If it returned prose instead (e.g. "I'll create..."), re-invoke the SAME Frontend \
+                specialist AT MOST ONCE with a stricter query like: "STOP. Call writeResult NOW with \
+                the complete self-contained index.html. Do not respond with prose. The user is waiting \
+                for the URL." Do NOT re-invoke a third time — if that single retry still returns no \
+                URL, immediately call `writeResult` yourself with the best implementation you can \
+                produce inline and proceed to step 6. Never loop on a stubborn specialist.
                 6. Your final reply MUST be a SHORT plain-text message containing: (a) the URL returned by \
                 the Frontend specialist (or writeResult), (b) a one-paragraph summary of what was built. \
                 Keep it under 150 words. NO markdown bullets, NO code blocks, NO HTML — just plain prose. \
@@ -322,6 +333,33 @@ public class OrchestratorPattern {
     /** Bedrock tool names must match {@code [a-zA-Z0-9_-]+}. Strip everything else. */
     private static String sanitize(String name) {
         return name.replaceAll("[^a-zA-Z0-9_-]", "_");
+    }
+
+    /**
+     * Resolve a unique, Bedrock-legal tool name per specialist (id → name). Two specialists
+     * sharing a name (or names that sanitize to the same string) would collide into one tool,
+     * silently hiding one specialist from the orchestrator. On collision we suffix the agent
+     * id, mirroring the MCP {@code server___tool} disambiguation convention. Iteration order
+     * follows {@code specialistDefs}, so names are stable across runs.
+     */
+    private static Map<String, String> uniqueToolNames(List<AgentDefinition> specialists) {
+        Map<String, String> byId = new LinkedHashMap<>();
+        Set<String> used = new HashSet<>();
+        for (AgentDefinition s : specialists) {
+            String base = sanitize(s.name());
+            String candidate = base;
+            if (used.contains(candidate)) {
+                candidate = sanitize(base + "_" + s.id());
+                // Extremely defensive: if even the id-suffixed form clashes, append a counter.
+                int n = 2;
+                while (used.contains(candidate)) {
+                    candidate = sanitize(base + "_" + s.id() + "_" + n++);
+                }
+            }
+            used.add(candidate);
+            byId.put(s.id(), candidate);
+        }
+        return byId;
     }
 
 

@@ -17,7 +17,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -136,7 +138,42 @@ public class GraphPattern {
             incoming.get(c.target()).add(c.source());
         }
 
-        List<String> order = topoSort(defsById.keySet(), outgoing, incoming);
+        // Restrict execution to the subgraph reachable from the user-designated entrypoint.
+        // The frontend lets the user pick exactly one starting node; Strands roots a graph at
+        // that node. Seeding Kahn from "all zero-indegree nodes" would quietly relax that into
+        // "any source", firing stray roots and disconnected islands the user never wired to the
+        // start. A BFS from team.entrypoint() guarantees execution genuinely ORIGINATES there.
+        Set<String> reachable = reachableFrom(team.entrypoint(), outgoing);
+        if (reachable.size() < defsById.size()) {
+            log.info("[graph] pruning {} node(s) unreachable from entrypoint {}",
+                    defsById.size() - reachable.size(), team.entrypoint());
+        }
+
+        // Rebuild adjacency over the reachable set only, dropping edges whose endpoints fall
+        // outside it. Without this drop a reachable node with an incoming edge from a pruned
+        // stray root would stall forever (its predecessor never enters `done`).
+        Map<String, Set<String>> outgoingR = new LinkedHashMap<>();
+        Map<String, Set<String>> incomingR = new LinkedHashMap<>();
+        for (String id : reachable) {
+            outgoingR.put(id, new LinkedHashSet<>());
+            incomingR.put(id, new LinkedHashSet<>());
+        }
+        for (String src : reachable) {
+            for (String tgt : outgoing.get(src)) {
+                if (reachable.contains(tgt)) {
+                    outgoingR.get(src).add(tgt);
+                    incomingR.get(tgt).add(src);
+                }
+            }
+        }
+
+        // Defs restricted to reachable nodes, preserving roster order for deterministic output.
+        Map<String, AgentDefinition> reachableDefs = new LinkedHashMap<>();
+        for (Map.Entry<String, AgentDefinition> e : defsById.entrySet()) {
+            if (reachable.contains(e.getKey())) reachableDefs.put(e.getKey(), e.getValue());
+        }
+
+        List<String> order = topoSort(reachable, outgoingR, incomingR);
 
         // Graph nodes do NOT get writeResult — its returnDirect=true behaviour replaces the
         // node's reply with a URL string, which is unreviewable by a downstream Code Reviewer
@@ -147,7 +184,7 @@ public class GraphPattern {
         WriteResultTool writeResult = writeResultToolFactory.build(project, config, telemetry);
         var taskTools = taskToolsFactory.build(project.id(), telemetry);
         Map<String, BuiltAgent> built = new LinkedHashMap<>();
-        for (AgentDefinition def : defsById.values()) {
+        for (AgentDefinition def : reachableDefs.values()) {
             built.put(def.id(), factory.buildOne(
                     RoleContracts.shape(def, RoleContracts.Pattern.GRAPH, false),
                     project, List.of(taskTools), List.of()));
@@ -158,8 +195,8 @@ public class GraphPattern {
         Map<String, String> outputs = new ConcurrentHashMap<>();
         log.info("[graph] order={} entrypoint={}", order, team.entrypoint());
 
-        // Pre-mark every agent as READY so the UI renders the full DAG up front.
-        for (AgentDefinition def : defsById.values()) {
+        // Pre-mark every reachable agent as READY so the UI renders the executing DAG up front.
+        for (AgentDefinition def : reachableDefs.values()) {
             telemetry.saveAgentState(project.id(), def.id(), def.name(), "READY",
                     0, 0, 0, 0, 0, 0L);
         }
@@ -177,7 +214,7 @@ public class GraphPattern {
             while (done.size() < order.size()) {
                 List<String> readyBatch = order.stream()
                         .filter(id -> !done.contains(id))
-                        .filter(id -> done.containsAll(incoming.get(id)))
+                        .filter(id -> done.containsAll(incomingR.get(id)))
                         .toList();
                 if (readyBatch.isEmpty()) {
                     throw new IllegalStateException(
@@ -187,7 +224,7 @@ public class GraphPattern {
                 log.info("[graph] running batch (parallel)={}", readyBatch);
                 List<CompletableFuture<Void>> futures = readyBatch.stream()
                         .map(nodeId -> CompletableFuture.runAsync(
-                                () -> runNode(nodeId, defsById, incoming, built, outputs, project, telemetry, task),
+                                () -> runNode(nodeId, reachableDefs, incomingR, built, outputs, project, telemetry, task),
                                 pool))
                         .toList();
                 CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new)).join();
@@ -195,10 +232,10 @@ public class GraphPattern {
             }
         }
 
-        // Sinks (no outgoing edges) carry the final deliverable. Multiple sinks are
-        // joined in topo order; in practice there's usually one.
+        // Sinks (no outgoing edges within the reachable subgraph) carry the final
+        // deliverable. Multiple sinks are joined in topo order; in practice there's usually one.
         List<String> sinks = order.stream()
-                .filter(id -> outgoing.get(id).isEmpty())
+                .filter(id -> outgoingR.get(id).isEmpty())
                 .toList();
         String sinkAnswer = sinks.isEmpty()
                 ? outputs.get(order.get(order.size() - 1))
@@ -216,7 +253,7 @@ public class GraphPattern {
 
         QuestResult structured = structuredAnswer.coerce(finalAnswer);
         return PatternResult.from("graph", team.entrypoint(), finalAnswer, order,
-                defsById, built, structured);
+                reachableDefs, built, structured);
     }
 
     /**
@@ -304,6 +341,26 @@ public class GraphPattern {
             log.error("[graph] failed to persist final deliverable", e);
             return null;
         }
+    }
+
+    /**
+     * BFS over forward edges from the designated entrypoint. Returns every node reachable
+     * from it (including the entrypoint itself). Nodes outside this set are stray roots or
+     * disconnected islands the user never wired to the start — they are pruned so execution
+     * genuinely originates at the entrypoint, as the Strands Graph contract requires.
+     */
+    private static Set<String> reachableFrom(String entrypoint, Map<String, Set<String>> outgoing) {
+        Set<String> seen = new LinkedHashSet<>();
+        Deque<String> queue = new ArrayDeque<>();
+        seen.add(entrypoint);
+        queue.add(entrypoint);
+        while (!queue.isEmpty()) {
+            String cur = queue.poll();
+            for (String next : outgoing.get(cur)) {
+                if (seen.add(next)) queue.add(next);
+            }
+        }
+        return seen;
     }
 
     /** Kahn's algorithm. Detects cycles and preserves agent-roster order for deterministic output. */
