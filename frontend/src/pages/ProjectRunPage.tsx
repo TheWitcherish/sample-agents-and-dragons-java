@@ -28,7 +28,7 @@ const ProjectRunPage: React.FC = () => {
   const { agentTransitions } = useAgentTransitions(projectId, undefined);
 
   const [logExpanded, setLogExpanded] = useState(false);
-  const [autoScroll, setAutoScroll] = useState(true);
+  const [autoScroll, setAutoScroll] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [resultUrl, setResultUrl] = useState<string>('');
   const [isPlaying, setIsPlaying] = useState(false);
