@@ -14,6 +14,7 @@ import com.witcherish.samples.agents.core.RoleContracts;
 import com.witcherish.samples.agents.observer.Throwables;
 import com.witcherish.samples.agents.telemetry.McpTelemetryPublisher.Session;
 import com.witcherish.samples.agents.tools.TaskToolsFactory;
+import com.witcherish.samples.agents.tools.WriteResultTool;
 import com.witcherish.samples.agents.tools.WriteResultToolFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -101,8 +102,23 @@ public class OrchestratorPattern {
                 .toList();
 
         // The write_result tool is shared by every agent in the team — same projectId,
-        // same bucket. Specialists call it directly to persist the deliverable.
-        ToolCallback writeResult = writeResultToolFactory.build(project, config, telemetry).asToolCallback();
+        // same bucket. We keep the raw tool (for the deferred post-run persist, mirroring
+        // GraphPattern.persistDeliverable) AND its ToolCallback (a last-resort fallback the
+        // orchestrator MAY call if no specialist ever produces HTML).
+        WriteResultTool writeResultTool = writeResultToolFactory.build(project, config, telemetry);
+        ToolCallback writeResult = writeResultTool.asToolCallback();
+
+        // Server-side HTML holder — the "blackboard" for inline delivery. The Frontend
+        // specialist now returns its complete index.html as plain reply text (see
+        // FRONTEND_UI_INLINE_CONTRACT); QA specialists (Code Reviewer / Performance Analyst)
+        // return the CORRECTED index.html. asTool captures whichever HTML reply it sees here,
+        // injects the current HTML into QA specialists' prompts so they can fix it, and
+        // returns only a SHORT ACK to the orchestrator. This keeps the multi-line HTML OUT of
+        // the orchestrator's tool_result channel — which both dodges the Spring AI 1.1.6
+        // strict-JSON re-encode bug and avoids sanitizeForToolResult() collapsing the HTML's
+        // newlines (which would corrupt embedded JS/CSS). The framework persists the final
+        // captured HTML after the run.
+        HtmlHolder htmlHolder = new HtmlHolder();
 
         // Per-quest TaskTools: shares an in-memory map across all agents in this run,
         // and mirrors createTask/updateTask to AppSync via MCP for live Adventure Log.
@@ -135,7 +151,7 @@ public class OrchestratorPattern {
         Map<String, String> toolNames = uniqueToolNames(specialistDefs);
         List<ToolCallback> specialistTools = specialistDefs.stream()
                 .map(spec -> asTool(spec, specialistsBuilt.get(spec.id()),
-                        project, telemetry, orchestratorDef, toolNames.get(spec.id())))
+                        project, telemetry, orchestratorDef, toolNames.get(spec.id()), htmlHolder))
                 .toList();
 
         // The orchestrator gets every specialist tool plus writeResult itself. Its prompt
@@ -179,6 +195,22 @@ public class OrchestratorPattern {
                 orchestratorBuilt.advisor().totalTokens(),
                 orchestratorBuilt.advisor().totalLatencyMs());
 
+        // Inline delivery: persist the latest HTML captured from the specialists (Frontend's
+        // original, then overwritten by any QA correction) via writeResult, mirroring
+        // GraphPattern.persistDeliverable. This is how the corrected artefact reaches the user
+        // — the orchestrator's tool_result channel never carried the multi-line HTML. If a
+        // specialist did ship via writeResult itself (last-resort fallback), the captured
+        // holder is empty and `answer` already contains the URL, so we skip the persist.
+        String capturedHtml = htmlHolder.get();
+        String finalAnswer = answer;
+        if (capturedHtml != null && !capturedHtml.isBlank()) {
+            String url = persistDeliverable(writeResultTool, capturedHtml);
+            if (url != null) {
+                finalAnswer = "Deliverable: " + url + "\n\n"
+                        + (answer == null ? "" : answer);
+            }
+        }
+
         var participants = new ArrayList<String>(specialistDefs.size() + 1);
         participants.add(orchestratorDef.id());
         specialistDefs.forEach(s -> participants.add(s.id()));
@@ -195,8 +227,8 @@ public class OrchestratorPattern {
             teamBuilt.put(spec.id(), specialistsBuilt.get(spec.id()));
         }
 
-        QuestResult structured = structuredAnswer.coerce(answer);
-        return PatternResult.from("orchestrator", orchestratorDef.id(), answer,
+        QuestResult structured = structuredAnswer.coerce(finalAnswer);
+        return PatternResult.from("orchestrator", orchestratorDef.id(), finalAnswer,
                 participants, teamDefs, teamBuilt, structured);
     }
 
@@ -211,8 +243,12 @@ public class OrchestratorPattern {
      */
     private ToolCallback asTool(AgentDefinition def, BuiltAgent specialist,
                                 Project project, Session telemetry, AgentDefinition orchestratorDef,
-                                String toolName) {
+                                String toolName, HtmlHolder htmlHolder) {
         ChatClient specialistClient = specialist.client();
+        // A QA specialist (Code Reviewer / Performance Analyst) corrects the Frontend's HTML.
+        // It needs the current HTML injected into its query, and its corrected-HTML reply
+        // overwrites the holder. A producer specialist (Frontend) only writes the holder.
+        boolean isQa = isQaRole(def.role());
         ToolDefinition definition = ToolDefinition.builder()
                 .name(toolName)
                 // Strands-style: describe what the specialist DOES, not how to call it.
@@ -259,10 +295,35 @@ public class OrchestratorPattern {
                     if (query.isBlank()) {
                         return "Error in %s (%s): missing or empty 'query'.".formatted(def.name(), def.role());
                     }
+                    // QA specialists correct the current HTML: inject it into the query so the
+                    // model sees the source it must fix, not just the orchestrator's prose brief.
+                    String effectiveQuery = query;
+                    if (isQa) {
+                        String currentHtml = htmlHolder.get();
+                        if (currentHtml != null && !currentHtml.isBlank()) {
+                            effectiveQuery = query + "\n\n--- Current index.html to review and fix ---\n"
+                                    + currentHtml;
+                        }
+                    }
+                    String reply = specialistClient.prompt().user(effectiveQuery).call().content();
                     // The specialist's own EventCaptureAdvisor streams its model turns to the
-                    // Adventure Log per cycle, so the reply is already persisted under def.id().
-                    // We only sanitize it here for the orchestrator's tool_result channel.
-                    return sanitizeForToolResult(specialistClient.prompt().user(query).call().content());
+                    // Adventure Log per cycle, so the full reply is already persisted under
+                    // def.id(). If the reply is a complete HTML document (Frontend producing it,
+                    // or a QA specialist returning its correction), capture it server-side and
+                    // return only a SHORT ACK — keeping the multi-line HTML out of the
+                    // orchestrator's tool_result channel (Spring AI 1.1.6 strict-JSON bug +
+                    // sanitizeForToolResult newline-collapse would both corrupt it).
+                    String html = extractHtml(reply);
+                    if (html != null) {
+                        htmlHolder.set(html);
+                        return "%s (%s) delivered a complete index.html (%d chars). It has been captured; %s"
+                                .formatted(def.name(), def.role(), html.length(),
+                                        isQa ? "the corrected version will be shipped."
+                                             : "you may now route it to a reviewer or ship it.");
+                    }
+                    // Non-HTML reply (a spec, a plan, prose): the orchestrator can integrate a
+                    // collapsed summary safely.
+                    return sanitizeForToolResult(reply);
                 } catch (Exception e) {
                     // Pass the Throwable as the last SLF4J arg so the full cause chain
                     // lands in CloudWatch — toString() alone strips the stack trace.
@@ -307,29 +368,37 @@ public class OrchestratorPattern {
                 You do not write code yourself. You decompose the goal and CALL these specialist tools:
                 %s
 
-                You also have a `writeResult` tool. The Frontend specialist is REQUIRED to call \
-                writeResult itself with a complete index.html and return the URL — your job is to \
-                forward that URL to the user.
+                How delivery works in this pattern (IMPORTANT — read carefully):
+                - The Frontend specialist RETURNS the complete index.html as its answer. The framework \
+                captures it for you automatically — you do NOT need a URL back from it, and it does NOT \
+                call writeResult. When it delivers, the tool result is a short ACK like "…delivered a \
+                complete index.html (N chars)".
+                - QA specialists (Code Reviewer, Performance Analyst) RECEIVE that captured HTML \
+                automatically and RETURN a CORRECTED index.html. The framework re-captures their fix, \
+                so the corrected version is what ultimately ships. Their ACK confirms the capture.
+                - The framework persists the LATEST captured HTML as the deliverable after you finish. \
+                You do NOT normally call `writeResult` yourself — you have it only as a last resort if \
+                NO specialist ever produces HTML.
 
                 Procedure (mandatory):
                 1. Read the project goal. Identify the deliverable: an index.html for the requested app.
-                2. Plan the build. Typically: architecture → frontend implementation → code review.
+                2. Plan the build. Typically: architecture → frontend implementation → code review / \
+                performance pass.
                 3. CALL each specialist tool one at a time, in a sensible order — wait for each response \
-                before the next. Do not describe what you would do; actually invoke the tools.
+                before the next. Do not describe what you would do; actually invoke the tools. Route the \
+                Frontend's work THROUGH a reviewer / performance analyst so the shipped artefact is \
+                corrected and functional.
                 4. EVERY specialist tool call SHOULD include a `reasoning` argument with: \
                 `innerThought` (one short sentence: why this specialist now), `confidence` (high/medium/low), \
                 and `memoryNotes` (key decisions to carry forward). This is shown to the user live.
-                5. VERIFY the Frontend specialist's reply: it MUST contain a URL ending in `/index.html`. \
+                5. VERIFY the Frontend specialist delivered: its ACK should confirm a captured index.html. \
                 If it returned prose instead (e.g. "I'll create..."), re-invoke the SAME Frontend \
-                specialist AT MOST ONCE with a stricter query like: "STOP. Call writeResult NOW with \
-                the complete self-contained index.html. Do not respond with prose. The user is waiting \
-                for the URL." Do NOT re-invoke a third time — if that single retry still returns no \
-                URL, immediately call `writeResult` yourself with the best implementation you can \
-                produce inline and proceed to step 6. Never loop on a stubborn specialist.
-                6. Your final reply MUST be a SHORT plain-text message containing: (a) the URL returned by \
-                the Frontend specialist (or writeResult), (b) a one-paragraph summary of what was built. \
-                Keep it under 150 words. NO markdown bullets, NO code blocks, NO HTML — just plain prose. \
-                The user opens the URL to play the deliverable."""
+                specialist AT MOST ONCE with a stricter query like: "STOP. Return the COMPLETE \
+                self-contained index.html as your reply, starting with <!DOCTYPE html>. No prose." Do NOT \
+                re-invoke a third time. Never loop on a stubborn specialist.
+                6. Your final reply MUST be a SHORT plain-text message: a one-paragraph summary of what \
+                was built and which specialists contributed. Keep it under 150 words. NO markdown bullets, \
+                NO code blocks, NO HTML — just plain prose. The framework attaches the deliverable URL."""
                 .formatted(Prompts.composeUserPrompt(project, team), roster);
     }
 
@@ -377,6 +446,72 @@ public class OrchestratorPattern {
                 .replaceAll("[\\t\\f\\r\\n]+", " ")
                 .replaceAll(" +", " ")
                 .strip();
+    }
+
+    /**
+     * QA roles are the personas the user wants empowered to CORRECT the deliverable:
+     * Code Reviewer and Performance Analyst. Matched as substrings (case-insensitive)
+     * against the seed roles, mirroring {@link RoleContracts#forRole(String, RoleContracts.Pattern)}.
+     */
+    private static boolean isQaRole(String role) {
+        if (role == null) return false;
+        String r = role.toLowerCase(java.util.Locale.ROOT);
+        return r.contains("reviewer") || r.contains("performance");
+    }
+
+    /**
+     * If {@code reply} is (or wraps) a complete HTML document, return the clean source;
+     * otherwise {@code null}. Strips an optional ```html code fence the model sometimes adds
+     * despite the inline contract telling it not to — same tolerance as
+     * {@link GraphPattern#findHtmlOutput}.
+     */
+    private static String extractHtml(String reply) {
+        if (reply == null) return null;
+        String t = reply.strip();
+        if (t.startsWith("```")) {
+            int firstNl = t.indexOf('\n');
+            if (firstNl > 0) t = t.substring(firstNl + 1);
+            if (t.endsWith("```")) t = t.substring(0, t.length() - 3);
+            t = t.strip();
+        }
+        String lower = t.toLowerCase(java.util.Locale.ROOT);
+        return (lower.startsWith("<!doctype html") || lower.startsWith("<html")) ? t : null;
+    }
+
+    /**
+     * Persist the captured HTML via {@link WriteResultTool}, returning the URL on success or
+     * {@code null} on failure. Mirrors {@link GraphPattern#persistDeliverable} — failure is
+     * logged but does not break the run; the orchestrator's text answer still returns.
+     */
+    private String persistDeliverable(WriteResultTool tool, String html) {
+        try {
+            String result = tool.writeResult(html, null);
+            if (result.startsWith("Successfully wrote")) {
+                int urlStart = result.lastIndexOf(' ');
+                if (urlStart > 0) return result.substring(urlStart + 1);
+            }
+            log.warn("[orchestrator] writeResult did not return a success URL: {}", result);
+            return null;
+        } catch (Exception e) {
+            log.error("[orchestrator] failed to persist final deliverable", e);
+            return null;
+        }
+    }
+
+    /**
+     * Server-side single-slot holder for the run's current {@code index.html}. The Frontend
+     * specialist sets the initial HTML; QA specialists (Code Reviewer / Performance Analyst)
+     * overwrite it with their corrected version. The orchestrator never sees the raw HTML —
+     * only short acks — so the multi-line document never traverses the tool_result channel.
+     * Accessed from the orchestrator's single calling thread (specialist tool calls are
+     * sequential), but guarded with {@code synchronized} for safe publication.
+     */
+    private static final class HtmlHolder {
+        private String html;
+
+        synchronized void set(String value) { this.html = value; }
+
+        synchronized String get() { return html; }
     }
 
     /**

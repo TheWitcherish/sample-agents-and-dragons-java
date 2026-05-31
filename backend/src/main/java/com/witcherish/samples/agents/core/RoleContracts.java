@@ -73,27 +73,31 @@ public final class RoleContracts {
             `writeResult` call, the run fails.""";
 
     /**
-     * Graph-mode override of {@link #FRONTEND_UI_CONTRACT}.
+     * Inline-delivery override of {@link #FRONTEND_UI_CONTRACT}, used in Graph and
+     * Orchestrator runs.
      *
-     * <p>In a Graph DAG the Frontend node's output flows to a downstream Code Reviewer node
-     * as a labelled block of upstream context. A {@code writeResult} URL is not reviewable;
-     * the reviewer needs the HTML source. So in Graph mode we invert the rule: emit the
-     * complete {@code index.html} as the reply text, do NOT call {@code writeResult}. The
-     * GraphPattern persists the final sink output via writeResult after the DAG completes.
+     * <p>In both patterns the Frontend's HTML must reach a downstream QA agent (Code
+     * Reviewer / Performance Analyst) that will <em>read and correct</em> it. A
+     * {@code writeResult} URL is not reviewable — the QA agent needs the HTML source. So we
+     * invert the rule: emit the complete {@code index.html} as the reply text, do NOT call
+     * {@code writeResult}. The framework persists the final (possibly QA-corrected) HTML via
+     * writeResult after the run — GraphPattern via {@code findHtmlOutput}/{@code persistDeliverable}
+     * after the DAG completes, OrchestratorPattern via its server-side HTML holder after the
+     * orchestration loop ends.
      */
-    private static final String FRONTEND_UI_GRAPH_CONTRACT = """
+    private static final String FRONTEND_UI_INLINE_CONTRACT = """
 
-            --- ROLE CONTRACT: Frontend UI Developer (Graph node) ---
-            You are a Graph node whose output flows to a downstream Code Reviewer. Your \
-            reply MUST be the complete, self-contained `index.html` document as raw text \
-            — starting with `<!DOCTYPE html>` and ending with `</html>`. Single file: all \
-            CSS in <style> tags, all JavaScript in <script> tags, no external URLs. \
+            --- ROLE CONTRACT: Frontend UI Developer (inline delivery) ---
+            Your reply MUST be the complete, self-contained `index.html` document as raw \
+            text — starting with `<!DOCTYPE html>` and ending with `</html>`. Single file: \
+            all CSS in <style> tags, all JavaScript in <script> tags, no external URLs. \
             Implement EVERY feature in the brief — no `TODO` placeholders, no stub \
             functions. Do NOT call `writeResult`; the framework persists the final \
-            deliverable for you after the DAG completes. Do NOT wrap the HTML in markdown \
-            code fences (```html). Do NOT add prose preambles like "Here's the code:" — \
-            the downstream reviewer will treat any non-HTML lines as part of the artefact. \
-            Begin your reply with `<!DOCTYPE html>` on the first line.""";
+            deliverable for you. A downstream QA agent (Code Reviewer / Performance Analyst) \
+            may read and CORRECT your HTML, so emit clean, complete, self-contained source. \
+            Do NOT wrap the HTML in markdown code fences (```html). Do NOT add prose \
+            preambles like "Here's the code:" — any non-HTML lines will be treated as part \
+            of the artefact. Begin your reply with `<!DOCTYPE html>` on the first line.""";
 
     private static final String CODE_REVIEWER_CONTRACT = """
 
@@ -107,6 +111,57 @@ public final class RoleContracts {
             implementation; reviewers find bugs, they don't fix them. If you find no \
             blocking issues, return PASS with at least 3 specific positive findings — \
             never a vague "looks good".""";
+
+    /**
+     * Fix-capable Code Reviewer contract for Graph and Orchestrator runs (inline delivery).
+     *
+     * <p>The user's requirement: a Code Reviewer in a multi-agent pattern SHOULD be able to
+     * <em>correct</em> the Frontend's HTML so the shipped artefact is functional — not merely
+     * report on it. In Graph the framework ships the most-downstream HTML output; in
+     * Orchestrator the server-side HTML holder captures the latest HTML. Either way the
+     * reviewer makes its fixes land by emitting the corrected, complete {@code index.html}
+     * as its reply — doctype first, so it's recognised as the deliverable. The audit findings
+     * surface in the reviewer's reasoning turns (streamed to the Adventure Log); the final
+     * reply is pure HTML so it can be shipped and re-reviewed downstream.
+     */
+    private static final String CODE_REVIEWER_FIX_INLINE_CONTRACT = """
+
+            --- ROLE CONTRACT: Code Reviewer (fix-capable) ---
+            You receive the Frontend developer's complete `index.html` as upstream context. \
+            Audit it for: syntax correctness, algorithm efficiency, edge cases, memory \
+            management, responsive / mobile / touch design, accessibility, cross-browser \
+            compatibility, and security. Then ACTUALLY FIX every blocking bug you find — you \
+            are empowered to rewrite the implementation so the shipped artefact is functional. \
+            Your reply MUST be the complete, corrected, self-contained `index.html` document \
+            as raw text — starting with `<!DOCTYPE html>` and ending with `</html>`. Single \
+            file: all CSS in <style> tags, all JS in <script> tags, no external URLs, every \
+            feature from the brief implemented. If the code is already correct, return it \
+            UNCHANGED (still the full document). Do NOT call `writeResult`; the framework \
+            persists your corrected HTML. Do NOT wrap it in markdown code fences (```html). \
+            Do NOT prepend a prose verdict or findings list — any non-HTML lines corrupt the \
+            artefact. Begin your reply with `<!DOCTYPE html>` on the first line.""";
+
+    /**
+     * Fix-capable Code Reviewer contract for Swarm runs (delivery via handoff context).
+     *
+     * <p>Swarm peers exchange the running deliverable through the {@code handoff_to_agent}
+     * {@code context} field, not as a final reply (the shipper calls {@code writeResult} last,
+     * once the {@link #SWARM_PEER_EPILOGUE ShipGate} opens). So a fix-capable reviewer puts its
+     * <em>corrected</em> HTML into the {@code context} field on handoff, ensuring the shipper
+     * ships the fixed version rather than the Frontend's original.
+     */
+    private static final String CODE_REVIEWER_FIX_SWARM_CONTRACT = """
+
+            --- ROLE CONTRACT: Code Reviewer (fix-capable, swarm peer) ---
+            You receive the running `index.html` in the shared knowledge / handoff message. \
+            Audit it for syntax, edge cases, responsive / mobile / touch design, \
+            accessibility, cross-browser compatibility, and security — then ACTUALLY FIX \
+            every blocking bug you find. You are empowered to rewrite the implementation so \
+            the shipped artefact is functional. When you hand off, put the COMPLETE corrected, \
+            self-contained `index.html` (doctype to </html>, all CSS/JS inline, no external \
+            URLs) into the `context` field of `handoff_to_agent` so the shipper ships YOUR \
+            corrected version. If the code is already correct, pass it through unchanged in \
+            `context`. Do NOT call `writeResult` yourself; hand off to the shipper.""";
 
     private static final String GAME_LOGIC_ARCHITECT_CONTRACT = """
 
@@ -131,6 +186,45 @@ public final class RoleContracts {
             rationale. Do NOT call `writeResult`. Do NOT include code blocks unless a \
             directive is unambiguous as a 3-line snippet — directives are about INTENT, \
             not implementation.""";
+
+    /**
+     * Fix-capable Performance Analyst contract for Graph and Orchestrator runs (inline).
+     * Mirrors {@link #CODE_REVIEWER_FIX_INLINE_CONTRACT}: the analyst applies its
+     * optimisations directly to the HTML and emits the optimised complete document, so the
+     * framework ships a faster artefact rather than a list of directives nobody applied.
+     */
+    private static final String PERFORMANCE_ANALYST_FIX_INLINE_CONTRACT = """
+
+            --- ROLE CONTRACT: Performance Analyst (fix-capable) ---
+            You receive the Frontend developer's complete `index.html` as upstream context. \
+            APPLY performance optimisations directly to it: rendering (canvas vs DOM, \
+            requestAnimationFrame, offscreen-canvas), memory (object pooling, reduced GC \
+            pressure), algorithmic (better data structures, cheaper lookups), mobile (touch \
+            latency, viewport, battery). You are empowered to rewrite the implementation. \
+            Your reply MUST be the complete, optimised, self-contained `index.html` document \
+            as raw text — starting with `<!DOCTYPE html>` and ending with `</html>`, all \
+            CSS/JS inline, no external URLs, every feature from the brief preserved. Do NOT \
+            regress functionality in the name of speed. If no meaningful optimisation \
+            applies, return the document UNCHANGED. Do NOT call `writeResult`; the framework \
+            persists your output. Do NOT wrap it in markdown fences (```html) or prepend a \
+            prose directive list — any non-HTML lines corrupt the artefact. Begin your reply \
+            with `<!DOCTYPE html>` on the first line.""";
+
+    /**
+     * Fix-capable Performance Analyst contract for Swarm runs (delivery via handoff context).
+     * Mirrors {@link #CODE_REVIEWER_FIX_SWARM_CONTRACT}.
+     */
+    private static final String PERFORMANCE_ANALYST_FIX_SWARM_CONTRACT = """
+
+            --- ROLE CONTRACT: Performance Analyst (fix-capable, swarm peer) ---
+            You receive the running `index.html` in the shared knowledge / handoff message. \
+            APPLY performance optimisations directly to it (rendering, memory, algorithmic, \
+            mobile) — you are empowered to rewrite the implementation, but never regress a \
+            feature for speed. When you hand off, put the COMPLETE optimised, self-contained \
+            `index.html` (doctype to </html>, all CSS/JS inline, no external URLs) into the \
+            `context` field of `handoff_to_agent` so the shipper ships YOUR optimised \
+            version. If no meaningful optimisation applies, pass it through unchanged in \
+            `context`. Do NOT call `writeResult` yourself; hand off to the shipper.""";
 
     private static final String COORDINATOR_CONTRACT = """
 
@@ -177,11 +271,16 @@ public final class RoleContracts {
 
             --- PATTERN: Orchestrator (you are the orchestrator) ---
             You are the entrypoint. Specialists are exposed to you AS TOOLS. Decompose the \
-            goal, call specialists in a sensible order, and integrate their outputs. \
-            VERIFY each specialist reply: if a Frontend specialist returns prose instead \
-            of a URL ending in `/index.html`, RE-INVOKE that specialist with a stricter \
-            query. Only as a last resort call `writeResult` yourself. Your final reply \
-            must be plain text with the deliverable URL plus a brief summary.""";
+            goal, call specialists in a sensible order, and integrate their outputs. The \
+            Frontend specialist RETURNS its complete index.html as text and the framework \
+            captures it — you get a short ACK, not a URL. Route that captured HTML through a \
+            Code Reviewer and/or Performance Analyst: they receive the current HTML \
+            automatically and RETURN a corrected version, which the framework re-captures and \
+            ships. VERIFY the Frontend delivered (its ACK confirms a captured index.html); if \
+            it returned prose instead, RE-INVOKE that specialist once with a stricter query. \
+            Do NOT call `writeResult` yourself except as a last resort if no specialist ever \
+            produces HTML. Your final reply must be a short plain-text summary; the framework \
+            attaches the deliverable URL.""";
 
     private static final String GRAPH_NODE_EPILOGUE = """
 
@@ -272,21 +371,42 @@ public final class RoleContracts {
     }
 
     /**
-     * Pattern-aware role contract lookup. Frontend UI gets a Graph-specific contract that
-     * emits HTML inline (so a downstream reviewer can read it) instead of via writeResult.
-     * Other roles are pattern-agnostic.
+     * Pattern-aware role contract lookup.
+     *
+     * <p>The QA roles (Code Reviewer, Performance Analyst) and the Frontend role are
+     * pattern-sensitive because of the user requirement that downstream agents be able to
+     * CORRECT the Frontend's HTML so the shipped artefact is functional:
+     * <ul>
+     *   <li><b>Mono / null</b> — single agent or unknown pattern: report-only QA contracts,
+     *       Frontend ships via {@code writeResult}.</li>
+     *   <li><b>Graph / Orchestrator</b> — inline delivery: Frontend emits HTML as its reply,
+     *       QA roles emit the CORRECTED HTML as their reply; the framework persists the
+     *       most-downstream / latest HTML.</li>
+     *   <li><b>Swarm</b> — handoff delivery: QA roles put the CORRECTED HTML into the
+     *       {@code handoff_to_agent} {@code context} field so the shipper ships the fix.</li>
+     * </ul>
      */
     public static String forRole(String role, Pattern pattern) {
         if (role == null) return "";
+        boolean inline = pattern == Pattern.GRAPH || pattern == Pattern.ORCHESTRATOR;
+        boolean swarm = pattern == Pattern.SWARM;
         String normalized = role.toLowerCase(Locale.ROOT);
         if (normalized.contains("frontend")) {
-            return pattern == Pattern.GRAPH ? FRONTEND_UI_GRAPH_CONTRACT : FRONTEND_UI_CONTRACT;
+            return inline ? FRONTEND_UI_INLINE_CONTRACT : FRONTEND_UI_CONTRACT;
         }
         if (normalized.contains("code reviewer")
-                || normalized.contains("reviewer"))        return CODE_REVIEWER_CONTRACT;
+                || normalized.contains("reviewer")) {
+            if (inline) return CODE_REVIEWER_FIX_INLINE_CONTRACT;
+            if (swarm)  return CODE_REVIEWER_FIX_SWARM_CONTRACT;
+            return CODE_REVIEWER_CONTRACT;
+        }
         if (normalized.contains("game logic architect")
                 || normalized.contains("architect"))       return GAME_LOGIC_ARCHITECT_CONTRACT;
-        if (normalized.contains("performance"))            return PERFORMANCE_ANALYST_CONTRACT;
+        if (normalized.contains("performance")) {
+            if (inline) return PERFORMANCE_ANALYST_FIX_INLINE_CONTRACT;
+            if (swarm)  return PERFORMANCE_ANALYST_FIX_SWARM_CONTRACT;
+            return PERFORMANCE_ANALYST_CONTRACT;
+        }
         if (normalized.contains("hands-on cto")
                 || normalized.contains("cto"))             return HANDS_ON_CTO_CONTRACT;
         if (normalized.contains("coordinator"))            return COORDINATOR_CONTRACT;
