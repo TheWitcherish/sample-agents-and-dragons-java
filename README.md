@@ -94,7 +94,7 @@ Each pattern ships a ready-to-curl JSON payload in `backend/samples/`. The `/run
 **Sample.** `backend/samples/orchestrator.json` — Coordinator + Architect + Frontend Developer + Reviewer.
 
 **What the audience watches.**
-- The Coordinator calls `Game_Logic_Architect` (a tool, not a peer), then `Frontend_Developer`, then `Code_Reviewer` — visible in the events stream.
+- The Coordinator calls `Game_Logic_Architect` (a tool, not a peer), then `Frontend_Developer`, then `Code_Reviewer` — visible in the events stream. Each specialist is exposed as a tool with a Bedrock-safe unique name; if two specialists would collide on the same sanitized name, we disambiguate with an id suffix (the same `server___tool` convention MCP uses for cross-server collisions).
 - The frontend specialist calls `writeResult` directly; the boss only forwards the URL.
 - Each agent card lighting up READY → WORKING → STOPPED with token + cycle counts (Spring AI's `Usage` metadata, surfaced via `EventCaptureAdvisor`).
 - The Adventure Log filling progressively as agents call `createTask` / `updateTask` over MCP — same wire format as their domain tools, but routed to the `manage-tasks` Lambda for AppSync writes.
@@ -112,13 +112,14 @@ Each pattern ships a ready-to-curl JSON payload in `backend/samples/`. The `/run
 **Sample.** `backend/samples/graph.json` — `Architect → {Frontend, UX} → Finalizer`.
 
 **What the audience watches.**
-- The execution log line `[graph] order=[agent-architect, agent-frontend, agent-ux, agent-finalizer]` — sibling order is *insertion order in the JSON*, deterministic across runs.
+- The execution log line `[graph] order=[agent-architect, agent-frontend, agent-ux, agent-finalizer]` — a topological order computed by Kahn's algorithm, deterministic across runs (ties broken by insertion order in the JSON).
+- Frontend and UX light up `WORKING` *at the same time* — independent siblings run concurrently, each on its own Java 25 virtual thread (`Executors.newVirtualThreadPerTaskExecutor()`), and the graph waits on `CompletableFuture.allOf(...)` before the fan-in node starts.
 - The Finalizer's input shows two upstream blocks (`--- Output from Frontend (...) ---` and `--- Output from UX Copywriter (...) ---`).
 - The merged HTML at the deliverable URL: Frontend's full document with UX's onboarding overlay woven in at line ~350.
 
-**Expected timing.** ~140-180 seconds. 4 sequential rounds with one parallelism opportunity (Frontend and UX could run concurrently — the current implementation runs them sequentially in roster order; faithful Strands behaviour).
+**Expected timing.** ~110-150 seconds. The DAG runs in topological *batches*: all nodes whose predecessors are done fire together. `Architect` runs alone, then `{Frontend, UX}` run in parallel (one round, not two), then `Finalizer` fans in. Unreachable nodes are pruned by a BFS from the entrypoint before execution.
 
-**The "now you try" hook.** Add an edge `agent-ux → agent-frontend` (so Frontend depends on UX too) and watch the topo-sort serialize them.
+**The "now you try" hook.** Add an edge `agent-ux → agent-frontend` (so Frontend depends on UX too) and watch the batches collapse — the two siblings that used to run in parallel now serialize, because Frontend can no longer start until UX is done.
 
 **Pedagogical contrast.** Graph is the right primitive when the workflow is **known up front**. The audience can predict the execution order before you hit run — that's the whole point.
 
@@ -133,11 +134,23 @@ Each pattern ships a ready-to-curl JSON payload in `backend/samples/`. The `/run
 - The third agent terminates the swarm by calling `writeResult` with `returnDirect=true` (no further handoff).
 - `participatingAgentIds` reflects actual execution order from `nodeHistory`, not the team roster.
 
-**Expected timing.** ~140-180 seconds. 3 sequential turns + 2 handoffs.
+**Two safety nets you can break on purpose.**
+- **Whole-team ship gate.** A `ShipGate` wrapper around `writeResult` *rejects* the shipment until every peer on the roster has been consulted, then forces a handoff to the next unconsulted peer. So an over-eager Architect that tries to ship on turn one gets bounced back into the swarm — the audience sees the rejection and the forced reroute.
+- **Ping-pong detection.** If the last `PING_PONG_WINDOW=4` handoffs contain fewer than `PING_PONG_MIN_UNIQUE=3` distinct agents (two peers bouncing control back and forth), the swarm breaks the loop. This is *on by default* here — Strands ships it off — because it plays well on stream.
 
-**The "now you try" hook.** Add a "Code Critic" peer; have the Reviewer hand off to it before shipping. Watch the bounded-loop safety net (`max_handoffs=20`) keep things tight.
+**Expected timing.** ~140-180 seconds. 3 sequential turns + 2 handoffs, bounded by `MAX_HANDOFFS=20` / `MAX_ITERATIONS=20`.
+
+**The "now you try" hook.** Add a "Code Critic" peer; have the Reviewer hand off to it before shipping. Watch the ShipGate refuse to let anyone `writeResult` until the Critic has weighed in too.
 
 **Pedagogical contrast.** Swarm is **dynamic and decentralised** — peers decide. Vs Orchestrator (boss decides), vs Graph (topology decides). Swarm is overkill for our 3-agent demo; the *design choice* shows up clearly only with 5+ agents and ambiguous routing.
+
+### What the three multi-agent patterns share
+
+- **One typed return shape.** Orchestrator, Graph, and Swarm all return a `PatternResult` — our mirror of Strands' `MultiAgentResult`. It carries the pattern name, the entrypoint, the final answer, the participating agent ids in execution order, and per-agent telemetry, so the frontend and the `/run` response speak the same vocabulary regardless of which pattern ran.
+- **No agent is silently dropped — each pattern enforces discovery its own way.**
+  - **Graph** roots execution at the user-picked entrypoint via a BFS over forward edges. Stray roots and disconnected islands the user never wired to the start are *pruned* (and logged: `[graph] pruning N node(s) unreachable from entrypoint …`), so what runs genuinely originates at the entrypoint — Strands' Graph contract, rather than "fire every zero-indegree node."
+  - **Orchestrator** vends a unique, Bedrock-legal tool name per specialist. Two specialists whose names sanitize to the same string would otherwise collapse into one tool and hide a specialist; we de-collide by suffixing the agent id (the MCP `server___tool` convention).
+  - **Swarm** treats the quest as a team effort: a `ShipGate` rejects `writeResult` until every roster peer has been consulted, and the entrypoint epilogue forces a hand-off-first turn so the coordinator can't ship a one-agent answer.
 
 ---
 
