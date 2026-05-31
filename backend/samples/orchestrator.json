@@ -1,9 +1,9 @@
 {
   "project": {
     "id": "demo-orchestrator-001",
-    "questId": "quest-web-paint",
-    "name": "Web Paint",
-    "prompt": "Create a single-file web Paint application running in the browser. It must be usable on a touchscreen smartphone or tablet. The user can pick a color, choose a pen style and thickness, draw on a canvas, and save their drawing. Deliver one self-contained `index.html` containing the HTML, CSS, and JavaScript."
+    "questId": "quest-snake",
+    "name": "Snake",
+    "prompt": "Create a snake-style game. Add levels with different layouts, power-ups (speed boost, invincibility), leaderboard, and smooth animations to the game. Include explosion animations and game over screen. Keep it simple but playable on ipad tablet with small screen and touch screen on a smartphone."
   },
   "team": {
     "name": "Witcher Build Crew",
