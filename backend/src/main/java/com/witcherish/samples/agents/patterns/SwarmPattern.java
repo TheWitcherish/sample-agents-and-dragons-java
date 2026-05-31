@@ -163,7 +163,7 @@ public class SwarmPattern {
                         shaped.prompt() + SINGLE_HANDOFF_INSTRUCTION,
                         shaped.role(), shaped.tools());
             }
-            built.put(def.id(), factory.buildOne(shaped, project,
+            built.put(def.id(), factory.buildOne(shaped, project, telemetry,
                     List.of(taskTools), List.of(gatedWriteResult, handoffTool)));
         }
 
@@ -217,7 +217,10 @@ public class SwarmPattern {
                     peer.advisor().totalLatencyMs());
             String reply = peer.client().prompt().user(userPrompt).call().content();
 
-            telemetry.saveAgentMessage(project.id(), current.id(), "assistant", reply == null ? "" : reply);
+            // This peer's model turns are streamed to the Adventure Log by its own
+            // EventCaptureAdvisor, once per tool-calling cycle (including the handoff turn's
+            // closing prose). The collapsed final reply is already persisted, so we don't
+            // re-save it here.
             // STOPPED also uses the running total. If the peer is re-invoked after a
             // handoff cycle, both turns' tokens and latency stay visible.
             telemetry.saveAgentState(project.id(), current.id(), current.name(), "STOPPED",

@@ -1,5 +1,6 @@
 package com.witcherish.samples.agents.observer;
 
+import com.witcherish.samples.agents.telemetry.McpTelemetryPublisher.Session;
 import org.springframework.ai.chat.client.ChatClientRequest;
 import org.springframework.ai.chat.client.ChatClientResponse;
 import org.springframework.ai.chat.client.advisor.api.CallAdvisor;
@@ -18,6 +19,13 @@ import java.util.concurrent.atomic.AtomicLong;
  *   <li>Emit BEFORE_MODEL_CALL / AFTER_MODEL_CALL prose into the in-memory
  *       {@link EventLog} so the {@code /events} endpoint and CloudWatch tails stay
  *       useful.</li>
+ *   <li>Stream each model turn's text to the Adventure Log via
+ *       {@link Session#saveAgentMessage}. Because the factory wires a
+ *       {@code ToolCallAdvisor} <em>outside</em> this advisor, the tool-calling loop
+ *       re-enters {@code adviseCall} once per cycle — so the plan turn, the
+ *       "creating the board…" turn, every tool-summary turn, and the final ship all
+ *       persist live, instead of only the collapsed {@code .content()} the pattern
+ *       sees at the end.</li>
  *   <li>Accumulate token usage and cycle counts from every {@link ChatResponse}
  *       so the surrounding pattern can publish them via the MCP telemetry channel
  *       at the end of an agent's turn ({@code save_agent_state} STOPPED event).</li>
@@ -31,6 +39,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class EventCaptureAdvisor implements CallAdvisor {
 
     private final EventLog eventLog;
+    private final Session telemetry;
     private final String projectId;
     private final String agentId;
     private final String agentName;
@@ -43,8 +52,10 @@ public class EventCaptureAdvisor implements CallAdvisor {
     /** Cumulative wall-clock time spent inside model round-trips for this agent (ms). */
     private final AtomicLong totalLatencyMs = new AtomicLong(0);
 
-    public EventCaptureAdvisor(EventLog eventLog, String projectId, String agentId, String agentName) {
+    public EventCaptureAdvisor(EventLog eventLog, Session telemetry,
+                               String projectId, String agentId, String agentName) {
         this.eventLog = eventLog;
+        this.telemetry = telemetry == null ? Session.NO_OP : telemetry;
         this.projectId = projectId;
         this.agentId = agentId;
         this.agentName = agentName;
@@ -76,6 +87,16 @@ public class EventCaptureAdvisor implements CallAdvisor {
                 ? chatResponse.getResult().getOutput().getText()
                 : "";
         eventLog.emit(AgentEvent.of(projectId, agentId, agentName, "AFTER_MODEL_CALL", text));
+
+        // Stream this turn to the Adventure Log. ToolCallAdvisor sits outside us, so we're
+        // re-entered once per tool-calling cycle: the plan turn, any "doing X now" narration
+        // between tool calls, and the final answer each persist as their own message — live,
+        // in order. Skip empty turns: a pure tool_use response (no prose) has blank text and
+        // would otherwise render as an empty card. The returnDirect terminal turn (writeResult,
+        // handoff) also lands here when the model emits closing prose alongside the call.
+        if (text != null && !text.isBlank()) {
+            telemetry.saveAgentMessage(projectId, agentId, "assistant", text);
+        }
 
         // Aggregate counters. Each adviseCall is one round-trip to the model — bumps the
         // cycle (and message) counter by 1, pulls token deltas from the response metadata

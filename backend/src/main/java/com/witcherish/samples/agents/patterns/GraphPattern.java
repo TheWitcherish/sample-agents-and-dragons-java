@@ -187,7 +187,7 @@ public class GraphPattern {
         for (AgentDefinition def : reachableDefs.values()) {
             built.put(def.id(), factory.buildOne(
                     RoleContracts.shape(def, RoleContracts.Pattern.GRAPH, false),
-                    project, List.of(taskTools), List.of()));
+                    project, telemetry, List.of(taskTools), List.of()));
         }
 
         String task = Prompts.composeUserPrompt(project, team);
@@ -286,7 +286,8 @@ public class GraphPattern {
         String reply = node.client().prompt().user(nodePrompt).call().content();
         outputs.put(nodeId, reply == null ? "" : reply);
 
-        telemetry.saveAgentMessage(project.id(), def.id(), "assistant", reply == null ? "" : reply);
+        // EventCaptureAdvisor streams this node's model turns to the Adventure Log per cycle,
+        // so the final reply is already persisted — no explicit saveAgentMessage here.
         telemetry.saveAgentState(project.id(), def.id(), def.name(), "STOPPED",
                 node.advisor().cycleCount(), node.advisor().messageCount(),
                 node.advisor().inputTokens(), node.advisor().outputTokens(),

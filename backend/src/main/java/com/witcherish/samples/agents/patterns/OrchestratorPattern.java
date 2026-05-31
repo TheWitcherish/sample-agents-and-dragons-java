@@ -125,7 +125,7 @@ public class OrchestratorPattern {
         for (AgentDefinition spec : specialistDefs) {
             specialistsBuilt.put(spec.id(), factory.buildOne(
                     RoleContracts.shape(spec, RoleContracts.Pattern.ORCHESTRATOR, false),
-                    project, List.of(taskTools), List.of(writeResult)));
+                    project, telemetry, List.of(taskTools), List.of(writeResult)));
         }
         // Tool names must be unique: two specialists with the same role/name string would
         // otherwise sanitize to the same Bedrock tool name, and the orchestrator could only
@@ -146,7 +146,7 @@ public class OrchestratorPattern {
         orchestratorCallbacks.add(writeResult);
         BuiltAgent orchestratorBuilt = factory.buildOne(
                 RoleContracts.shape(orchestratorDef, RoleContracts.Pattern.ORCHESTRATOR, true),
-                project, List.of(taskTools), orchestratorCallbacks);
+                project, telemetry, List.of(taskTools), orchestratorCallbacks);
         ChatClient orchestrator = orchestratorBuilt.client();
 
         log.info("[orchestrator] entrypoint={} specialists={}",
@@ -167,7 +167,9 @@ public class OrchestratorPattern {
                 .call()
                 .content();
 
-        telemetry.saveAgentMessage(project.id(), orchestratorDef.id(), "assistant", answer == null ? "" : answer);
+        // The orchestrator's model turns (plan, per-delegation narration, final ship) are
+        // streamed to the Adventure Log by EventCaptureAdvisor, once per tool-calling cycle.
+        // Re-saving `answer` here would duplicate the final turn, so we don't.
         // Latency comes from the advisor's running total — sum of every adviseCall's
         // duration. Matches what specialists report (cumulative model-call time, not
         // wall-clock including waits).
@@ -257,9 +259,10 @@ public class OrchestratorPattern {
                     if (query.isBlank()) {
                         return "Error in %s (%s): missing or empty 'query'.".formatted(def.name(), def.role());
                     }
-                    String reply = sanitizeForToolResult(specialistClient.prompt().user(query).call().content());
-                    telemetry.saveAgentMessage(project.id(), def.id(), "assistant", reply == null ? "" : reply);
-                    return reply;
+                    // The specialist's own EventCaptureAdvisor streams its model turns to the
+                    // Adventure Log per cycle, so the reply is already persisted under def.id().
+                    // We only sanitize it here for the orchestrator's tool_result channel.
+                    return sanitizeForToolResult(specialistClient.prompt().user(query).call().content());
                 } catch (Exception e) {
                     // Pass the Throwable as the last SLF4J arg so the full cause chain
                     // lands in CloudWatch — toString() alone strips the stack trace.

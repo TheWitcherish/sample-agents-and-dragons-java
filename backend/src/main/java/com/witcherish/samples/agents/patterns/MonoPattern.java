@@ -58,7 +58,7 @@ public class MonoPattern {
         // Mono pattern epilogue so it can't pass the buck — there's no one to pass it to.
         var built = factory.buildOne(
                 RoleContracts.shape(def, RoleContracts.Pattern.MONO, true),
-                project, List.of(taskTools), List.of(writeResult));
+                project, telemetry, List.of(taskTools), List.of(writeResult));
         ChatClient agent = built.client();
 
         log.info("[mono] invoking entrypoint={} ({})", def.name(), def.id());
@@ -70,7 +70,10 @@ public class MonoPattern {
                 .call()
                 .content();
 
-        telemetry.saveAgentMessage(project.id(), def.id(), "assistant", answer == null ? "" : answer);
+        // The Adventure Log message stream is owned by EventCaptureAdvisor now: it fires once
+        // per tool-calling cycle and saves every non-empty model turn (plan, "creating the
+        // board…", tool summaries, final ship). Persisting `answer` here again would duplicate
+        // the final turn the advisor already streamed, so we don't.
         // Pull real cycle/token aggregates from the advisor — Spring AI normalises Bedrock
         // usage onto Usage#getPromptTokens / getCompletionTokens / getTotalTokens. Latency
         // is the advisor's running total of model-call wall-clock, so it matches what the
