@@ -99,6 +99,35 @@ public final class RoleContracts {
             preambles like "Here's the code:" — any non-HTML lines will be treated as part \
             of the artefact. Begin your reply with `<!DOCTYPE html>` on the first line.""";
 
+    /**
+     * Swarm-delivery override of {@link #FRONTEND_UI_CONTRACT}.
+     *
+     * <p>In a swarm, {@code writeResult} is gated by the ShipGate until every peer has
+     * contributed, so the Frontend dev MUST NOT try to ship — the un-overridden
+     * {@link #FRONTEND_UI_CONTRACT} ("your ONLY successful response is a call to
+     * {@code writeResult}") would deadlock against the gate and push the model toward prose.
+     * Instead the dev IMPLEMENTS the complete {@code index.html} and hands it to the next
+     * peer through the {@code handoff_to_agent} {@code context} field. The framework also
+     * captures the HTML server-side from the reply/context, so a downstream Code Reviewer
+     * always receives the real source to audit and correct.
+     */
+    private static final String FRONTEND_UI_SWARM_CONTRACT = """
+
+            --- ROLE CONTRACT: Frontend UI Developer (swarm peer) ---
+            You IMPLEMENT the deliverable. Write the complete, self-contained `index.html` \
+            document — starting with `<!DOCTYPE html>` and ending with `</html>`, all CSS in \
+            <style> tags, all JavaScript in <script> tags, no external URLs. Implement EVERY \
+            feature in the brief — no `TODO` placeholders, no stub functions, game logic must \
+            run when the file is opened in a browser. If the shared knowledge already contains \
+            a spec (e.g. from a Game Logic Architect), implement it faithfully. If a Code \
+            Reviewer hands back with requested changes and the current index.html, apply their \
+            fixes and produce the full updated document. \
+            Do NOT call `writeResult` — it is REJECTED until every peer has contributed. \
+            Instead, call `handoff_to_agent` to the next unconsulted peer (typically the Code \
+            Reviewer) and paste your COMPLETE index.html (doctype to </html>) into the \
+            `context` field — that is the channel that carries your code to the reviewer. \
+            Do NOT wrap the HTML in markdown fences (```html). Hand off exactly once, then stop.""";
+
     private static final String CODE_REVIEWER_CONTRACT = """
 
             --- ROLE CONTRACT: Code Reviewer ---
@@ -153,7 +182,9 @@ public final class RoleContracts {
     private static final String CODE_REVIEWER_FIX_SWARM_CONTRACT = """
 
             --- ROLE CONTRACT: Code Reviewer (fix-capable, swarm peer) ---
-            You receive the running `index.html` in the shared knowledge / handoff message. \
+            You receive the running `index.html` in the "Current index.html" block of your \
+            input (the framework captures it from the previous peer). Review THAT document — \
+            never claim the code is missing; if the block is present, the code is there. \
             Audit it for syntax, edge cases, responsive / mobile / touch design, \
             accessibility, cross-browser compatibility, and security — then ACTUALLY FIX \
             every blocking bug you find. You are empowered to rewrite the implementation so \
@@ -217,7 +248,8 @@ public final class RoleContracts {
     private static final String PERFORMANCE_ANALYST_FIX_SWARM_CONTRACT = """
 
             --- ROLE CONTRACT: Performance Analyst (fix-capable, swarm peer) ---
-            You receive the running `index.html` in the shared knowledge / handoff message. \
+            You receive the running `index.html` in the "Current index.html" block of your \
+            input (the framework captures it from the previous peer). Optimise THAT document. \
             APPLY performance optimisations directly to it (rendering, memory, algorithmic, \
             mobile) — you are empowered to rewrite the implementation, but never regress a \
             feature for speed. When you hand off, put the COMPLETE optimised, self-contained \
@@ -392,7 +424,9 @@ public final class RoleContracts {
         boolean swarm = pattern == Pattern.SWARM;
         String normalized = role.toLowerCase(Locale.ROOT);
         if (normalized.contains("frontend")) {
-            return inline ? FRONTEND_UI_INLINE_CONTRACT : FRONTEND_UI_CONTRACT;
+            if (inline) return FRONTEND_UI_INLINE_CONTRACT;
+            if (swarm)  return FRONTEND_UI_SWARM_CONTRACT;
+            return FRONTEND_UI_CONTRACT;
         }
         if (normalized.contains("code reviewer")
                 || normalized.contains("reviewer")) {

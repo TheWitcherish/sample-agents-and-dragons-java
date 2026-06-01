@@ -13,6 +13,7 @@ import com.witcherish.samples.agents.core.AgentFactory.BuiltAgent;
 import com.witcherish.samples.agents.core.RoleContracts;
 import com.witcherish.samples.agents.telemetry.McpTelemetryPublisher.Session;
 import com.witcherish.samples.agents.tools.TaskToolsFactory;
+import com.witcherish.samples.agents.tools.WriteResultTool;
 import com.witcherish.samples.agents.tools.WriteResultToolFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,6 +26,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -88,7 +90,7 @@ public class SwarmPattern {
               "properties": {
                 "agent_name": { "type": "string", "description": "Sanitised name (snake_case) of the peer agent to hand off to." },
                 "message":    { "type": "string", "description": "Instructions for the next agent." },
-                "context":    { "type": "string", "description": "Optional knowledge to share — short, factual, JSON or plain text." }
+                "context":    { "type": "string", "description": "The running deliverable to share with the next agent. If you produced or corrected the index.html, paste the COMPLETE document here (doctype to </html>) — this is the only channel that carries your code to the next peer. Otherwise share your spec / review notes as plain text." }
               },
               "required": ["agent_name", "message"]
             }
@@ -131,7 +133,8 @@ public class SwarmPattern {
         // agent ships last — earlier peers exchange HTML via handoff_to_agent context,
         // never via writeResult. This dodges Spring AI 1.1.3's strict-JSON quirk on
         // re-encoding multi-line tool inputs across turns.
-        ToolCallback writeResult = writeResultToolFactory.build(project, config, telemetry).asToolCallback();
+        WriteResultTool writeResultTool = writeResultToolFactory.build(project, config, telemetry);
+        ToolCallback writeResult = writeResultTool.asToolCallback();
         var taskTools = taskToolsFactory.build(project.id(), telemetry);
 
         // The whole reason this pattern exists is to show the WHOLE team collaborate. Left
@@ -182,6 +185,14 @@ public class SwarmPattern {
         String task = Prompts.composeUserPrompt(project, team);
         List<String> nodeHistory = new ArrayList<>();
         Map<String, String> sharedKnowledge = new LinkedHashMap<>();
+        // Server-side single-slot holder for the run's current index.html — the same
+        // mechanism OrchestratorPattern (HtmlHolder) and GraphPattern (findHtmlOutput) use.
+        // The swarm's only inter-peer channel is the handoff `context` field, which the LLM
+        // is unreliable about filling with a full document. So we ALSO scan every peer's
+        // reply and handoff context for a complete HTML document and capture it here; the
+        // latest capture wins (the reviewer's correction overwrites the Frontend's draft).
+        // composeNodeInput injects this holder so the reviewer always sees real code to fix.
+        HtmlHolder htmlHolder = new HtmlHolder();
 
         AgentDefinition current = entrypointDef;
         String pendingMessage = null;            // null on first turn, set by handoff after that
@@ -203,7 +214,7 @@ public class SwarmPattern {
             iterations++;
             nodeHistory.add(current.name());
             String userPrompt = composeNodeInput(task, current, defsByName, nodeHistory,
-                    sharedKnowledge, pendingMessage, consulted);
+                    sharedKnowledge, pendingMessage, consulted, htmlHolder.get());
             log.info("[swarm] iter={} running={} ({})", iterations, current.name(), current.id());
 
             handoff.reset();
@@ -233,6 +244,18 @@ public class SwarmPattern {
             // forced-routing logic below can tell who is still missing from the roster.
             consulted.add(current.id());
 
+            // Capture an HTML deliverable straight from the reply, if the peer emitted one
+            // (the Frontend dev implements index.html; a fix-capable reviewer returns the
+            // corrected document). The handoff `context` field below is the LLM-driven
+            // channel; this reply scan is the safety net for when the model puts the code in
+            // its answer instead of the context. Latest capture wins.
+            String htmlFromReply = extractHtml(reply);
+            if (htmlFromReply != null) {
+                htmlHolder.set(htmlFromReply);
+                log.info("[swarm] captured index.html ({} chars) from {}'s reply",
+                        htmlFromReply.length(), current.name());
+            }
+
             if (!handoff.requested) {
                 // The agent ended its turn without handing off. Before we accept its reply
                 // as the quest's final answer, make sure the WHOLE team has contributed —
@@ -248,7 +271,11 @@ public class SwarmPattern {
                             iterations, current.name(),
                             team.agents().size() - consulted.size(), nextUnconsulted.name());
                     if (reply != null && !reply.isBlank()) {
-                        sharedKnowledge.put(current.name(), reply);  // carry the WIP forward
+                        // carry the WIP forward — but if it was HTML it's already in the
+                        // holder, so store a pointer rather than duplicating the document.
+                        sharedKnowledge.put(current.name(), htmlFromReply != null
+                                ? "delivered a complete index.html — see the current index.html below."
+                                : reply);
                     }
                     telemetry.saveAgentTransition(project.id(), UUID.randomUUID().toString(),
                             current.id(), nextUnconsulted.id());
@@ -266,7 +293,9 @@ public class SwarmPattern {
                     log.info("[swarm] roster exhausted, no deliverable yet — routing to shipper {} (nudge {})",
                             shipper.name(), shipNudges);
                     if (reply != null && !reply.isBlank()) {
-                        sharedKnowledge.put(current.name(), reply);
+                        sharedKnowledge.put(current.name(), htmlFromReply != null
+                                ? "delivered a complete index.html — see the current index.html below."
+                                : reply);
                     }
                     telemetry.saveAgentTransition(project.id(), UUID.randomUUID().toString(),
                             current.id(), shipper.id());
@@ -311,7 +340,22 @@ public class SwarmPattern {
                 break;
             }
             if (handoff.context != null && !handoff.context.isBlank()) {
-                sharedKnowledge.put(current.name(), handoff.context);
+                // If the peer pasted a complete index.html into the handoff context (the
+                // intended channel per HANDOFF_INPUT_SCHEMA), capture it as the deliverable
+                // and pass a short pointer through sharedKnowledge instead of the full
+                // document — the receiving peer gets the real HTML via the dedicated
+                // "Current index.html" block composeNodeInput injects from htmlHolder.
+                String htmlFromContext = extractHtml(handoff.context);
+                if (htmlFromContext != null) {
+                    htmlHolder.set(htmlFromContext);
+                    log.info("[swarm] captured index.html ({} chars) from {}'s handoff context",
+                            htmlFromContext.length(), current.name());
+                    sharedKnowledge.put(current.name(),
+                            "delivered a complete index.html (" + htmlFromContext.length()
+                            + " chars) — see the current index.html below.");
+                } else {
+                    sharedKnowledge.put(current.name(), handoff.context);
+                }
             }
             log.info("[swarm] handoff #{} {} -> {} : {}", handoffCount, current.name(), next.name(),
                     summarize(handoff.message));
@@ -331,6 +375,19 @@ public class SwarmPattern {
         List<String> participants = nodeHistory.stream()
                 .map(name -> idByName.getOrDefault(name, name))
                 .toList();
+        // Persist the captured deliverable. The shipper's gated writeResult call may already
+        // have written it, but capturing the latest HTML server-side and writing it here is
+        // the reliable path: it guarantees the corrected index.html ships even when the model
+        // ends with prose, hits a cap, or trips the ping-pong guard. Mirrors GraphPattern and
+        // OrchestratorPattern, which both persist server-side rather than trusting the model.
+        String html = htmlHolder.get();
+        if (html != null && !html.isBlank()) {
+            String url = persistDeliverable(writeResultTool, html);
+            if (url != null && !finalAnswer.contains(url)) {
+                finalAnswer = "Deliverable: " + url + "\n\n" + finalAnswer;
+            }
+        }
+
         // defsById (keyed by id) was built before the loop for forced-routing lookups;
         // reused here for PatternResult.
         QuestResult structured = structuredAnswer.coerce(finalAnswer);
@@ -402,7 +459,8 @@ public class SwarmPattern {
                                            List<String> nodeHistory,
                                            Map<String, String> sharedKnowledge,
                                            String pendingMessage,
-                                           Set<String> consulted) {
+                                           Set<String> consulted,
+                                           String currentHtml) {
         StringBuilder sb = new StringBuilder();
         if (pendingMessage != null && !pendingMessage.isBlank()) {
             sb.append("Handoff Message: ").append(pendingMessage).append("\n\n");
@@ -418,6 +476,16 @@ public class SwarmPattern {
             sharedKnowledge.forEach((agent, knowledge) ->
                     sb.append("- ").append(agent).append(": ").append(knowledge).append('\n'));
             sb.append('\n');
+        }
+        // The actual running deliverable, captured server-side from whichever peer last
+        // produced or corrected it. This is what makes the reviewer's job possible: it
+        // ALWAYS sees the real index.html source here, never just a spec. A peer that
+        // implements or corrects the HTML must paste the COMPLETE updated document into
+        // its handoff `context` so this block reflects its work for the next peer.
+        if (currentHtml != null && !currentHtml.isBlank()) {
+            sb.append("--- Current index.html (the running deliverable — review/fix THIS) ---\n");
+            sb.append(currentHtml).append("\n");
+            sb.append("--- end index.html ---\n\n");
         }
         sb.append("Other agents available for collaboration:\n");
         defsByName.values().stream()
@@ -437,15 +505,17 @@ public class SwarmPattern {
         sb.append('\n');
         if (notConsulted.isEmpty()) {
             sb.append("ALL peers have now contributed. The team is complete — the deliverable "
-                    + "may be shipped. If you are the shipper, assemble the final result from the "
-                    + "shared knowledge above and call writeResult now. Otherwise reply with the "
-                    + "final answer.");
+                    + "may be shipped. If you are the shipper, ship the Current index.html above "
+                    + "by calling writeResult with that complete document as `content` now. "
+                    + "Otherwise reply with the final answer.");
         } else {
             sb.append("Peers NOT yet consulted (you MUST hand off to one of these before the "
                     + "quest can ship): ").append(String.join(", ", notConsulted)).append(".\n");
             sb.append("Do your specialist part, then call handoff_to_agent to one of the "
-                    + "unconsulted peers, passing your work in the `context` field. Do NOT call "
-                    + "writeResult yet — it will be rejected until every peer has contributed.");
+                    + "unconsulted peers. If you produced or corrected the index.html, paste the "
+                    + "COMPLETE document (doctype to </html>) into the `context` field so the next "
+                    + "peer receives your code; otherwise share your spec / notes in `context`. Do "
+                    + "NOT call writeResult yet — it will be rejected until every peer has contributed.");
         }
         return sb.toString();
     }
@@ -459,6 +529,60 @@ public class SwarmPattern {
         if (s == null) return "";
         String oneLine = s.replace('\n', ' ').strip();
         return oneLine.length() <= 120 ? oneLine : oneLine.substring(0, 120) + "…";
+    }
+
+    /**
+     * If {@code text} is (or wraps) a complete HTML document, return the clean source;
+     * otherwise {@code null}. Strips an optional ```html code fence the model sometimes adds.
+     * Identical tolerance to {@link OrchestratorPattern#extractHtml} and
+     * {@link GraphPattern#findHtmlOutput} — kept local so the swarm has no cross-pattern dep.
+     */
+    private static String extractHtml(String text) {
+        if (text == null) return null;
+        String t = text.strip();
+        if (t.startsWith("```")) {
+            int firstNl = t.indexOf('\n');
+            if (firstNl > 0) t = t.substring(firstNl + 1);
+            if (t.endsWith("```")) t = t.substring(0, t.length() - 3);
+            t = t.strip();
+        }
+        String lower = t.toLowerCase(Locale.ROOT);
+        return (lower.startsWith("<!doctype html") || lower.startsWith("<html")) ? t : null;
+    }
+
+    /**
+     * Persist the captured HTML via {@link WriteResultTool}, returning the URL on success or
+     * {@code null} on failure. Mirrors {@link GraphPattern#persistDeliverable} — failure is
+     * logged but never breaks the run; the swarm's text answer still returns.
+     */
+    private String persistDeliverable(WriteResultTool tool, String html) {
+        try {
+            String result = tool.writeResult(html, null);
+            if (result.startsWith("Successfully wrote")) {
+                int urlStart = result.lastIndexOf(' ');
+                if (urlStart > 0) return result.substring(urlStart + 1);
+            }
+            log.warn("[swarm] writeResult did not return a success URL: {}", result);
+            return null;
+        } catch (Exception e) {
+            log.error("[swarm] failed to persist final deliverable", e);
+            return null;
+        }
+    }
+
+    /**
+     * Server-side single-slot holder for the run's current {@code index.html}. The Frontend
+     * peer sets the initial HTML; a fix-capable Code Reviewer / Performance Analyst overwrites
+     * it with their corrected version. Latest write wins, so the shipped artefact is the most
+     * downstream correction. Accessed from the swarm's single controller thread (peers run
+     * sequentially), but guarded with {@code synchronized} for safe publication.
+     */
+    private static final class HtmlHolder {
+        private String html;
+
+        synchronized void set(String value) { this.html = value; }
+
+        synchronized String get() { return html; }
     }
 
     /** Per-turn mutable signal written by the handoff tool, read by the controller loop. */
