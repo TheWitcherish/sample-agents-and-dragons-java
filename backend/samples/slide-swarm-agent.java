@@ -75,23 +75,36 @@ ChatClient reviewer = ChatClient.builder(modelFor("eu.anthropic.claude-sonnet-4-
 // ALSO scan each reply + handoff context for a complete document and hold the
 // latest. This is what GraphPattern (findHtmlOutput) and OrchestratorPattern
 // (HtmlHolder) already do — the swarm was the odd one out.
+//
+// SUBTLE TRAP: don't anchor the check to the START of the reply. A CAPABLE model
+// (Opus) narrates first — "Now I'll implement the Snake game:" — THEN emits the
+// <!doctype html>. A startsWith() check misses that and reports "no index.html",
+// which trips the readiness gate below and makes the reviewer rebuild from scratch.
+// So: find the doctype/<html> marker ANYWHERE, slice from there to </html>.
 
 String extractHtml(String text) {
     if (text == null) return null;
-    String t = text.strip();
-    if (t.startsWith("```")) t = t.replaceAll("^```\\w*\\n", "").replaceAll("```$", "").strip();
-    String lower = t.toLowerCase();
-    return (lower.startsWith("<!doctype html") || lower.startsWith("<html")) ? t : null;
+    String lower = text.toLowerCase();
+    int start = lower.indexOf("<!doctype html");
+    if (start < 0) start = lower.indexOf("<html");
+    if (start < 0) return null;                       // no document anywhere in the reply
+    int close = lower.lastIndexOf("</html>");
+    int end = close >= 0 ? close + "</html>".length() : text.length();
+    return text.substring(start, end).strip();        // drop the prose prefix + any trailing chatter
 }
 
 // --- Fix #2: an HTML-READINESS GATE — "took a turn" is NOT "built the artefact" ---
-// The deeper bug: a weak junior model (e.g. Qwen as Frontend Dev) takes its turn and
-// hands off with PROSE or a stub — no index.html. The swarm marked it "consulted" and
-// marched on, so the Reviewer correctly reported "no actual implementation code was
-// included". Capturing/propagating HTML can't help when the HTML was NEVER produced.
-// So before advancing past an IMPLEMENTER peer, verify it actually emitted a document.
-// If not: bounce control straight back with a hard build order (bounded retries), then
-// escalate to a code-capable peer (reviewer / CTO) that builds from the spec.
+// The gate only fires when the implementer TRULY produced nothing: a junior model
+// hands off with PROSE or a stub — no index.html anywhere. The swarm would mark it
+// "consulted" and march on, so the Reviewer reported "no implementation code". So
+// before advancing past an IMPLEMENTER peer, verify it actually emitted a document.
+// If not: bounce control straight back with a hard build order (bounded retries),
+// then escalate to a code-capable peer (reviewer / CTO) that builds from the spec.
+//
+// CRITICAL: this gate is only correct if extractHtml (Fix #1) detects prose-prefixed
+// HTML. Anchor it to startsWith() and a CAPABLE model's real document reads as "empty",
+// the gate fires falsely, and the reviewer rebuilds work that already existed. The two
+// fixes are a pair — detection first, then gate on what detection actually found.
 
 boolean isImplementer(String peer) { return peer.equals("Frontend_Developer"); }
 int MAX_BUILD_RETRIES = 2;

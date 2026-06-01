@@ -460,22 +460,21 @@ public class OrchestratorPattern {
     }
 
     /**
-     * If {@code reply} is (or wraps) a complete HTML document, return the clean source;
-     * otherwise {@code null}. Strips an optional ```html code fence the model sometimes adds
-     * despite the inline contract telling it not to — same tolerance as
-     * {@link GraphPattern#findHtmlOutput}.
+     * If {@code reply} CONTAINS a complete HTML document, return the clean source; otherwise
+     * {@code null}. Capable models often narrate before emitting the document, so we locate the
+     * {@code <!doctype html>}/{@code <html>} marker ANYWHERE in the reply — a start-anchored check
+     * would miss prose-prefixed HTML. Trailing chatter after {@code </html>} is trimmed too.
+     * Same tolerance as {@link GraphPattern#findHtmlOutput}.
      */
     private static String extractHtml(String reply) {
         if (reply == null) return null;
-        String t = reply.strip();
-        if (t.startsWith("```")) {
-            int firstNl = t.indexOf('\n');
-            if (firstNl > 0) t = t.substring(firstNl + 1);
-            if (t.endsWith("```")) t = t.substring(0, t.length() - 3);
-            t = t.strip();
-        }
-        String lower = t.toLowerCase(java.util.Locale.ROOT);
-        return (lower.startsWith("<!doctype html") || lower.startsWith("<html")) ? t : null;
+        String lower = reply.toLowerCase(java.util.Locale.ROOT);
+        int start = lower.indexOf("<!doctype html");
+        if (start < 0) start = lower.indexOf("<html");
+        if (start < 0) return null;
+        int closeTag = lower.lastIndexOf("</html>");
+        int end = closeTag >= 0 ? closeTag + "</html>".length() : reply.length();
+        return reply.substring(start, end).strip();
     }
 
     /**

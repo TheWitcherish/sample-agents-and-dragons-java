@@ -619,22 +619,24 @@ public class SwarmPattern {
     }
 
     /**
-     * If {@code text} is (or wraps) a complete HTML document, return the clean source;
-     * otherwise {@code null}. Strips an optional ```html code fence the model sometimes adds.
+     * If {@code text} CONTAINS a complete HTML document, return the clean source; otherwise
+     * {@code null}. Capable models routinely narrate before they build ("Now I'll implement
+     * the game:") and then emit the document, so we locate the {@code <!doctype html>}/{@code
+     * <html>} marker ANYWHERE in the reply — a start-anchored check would miss prose-prefixed
+     * HTML and falsely report "no index.html". Trailing chatter after {@code </html>} (and any
+     * closing ``` fence) is trimmed too.
      * Identical tolerance to {@link OrchestratorPattern#extractHtml} and
      * {@link GraphPattern#findHtmlOutput} — kept local so the swarm has no cross-pattern dep.
      */
     private static String extractHtml(String text) {
         if (text == null) return null;
-        String t = text.strip();
-        if (t.startsWith("```")) {
-            int firstNl = t.indexOf('\n');
-            if (firstNl > 0) t = t.substring(firstNl + 1);
-            if (t.endsWith("```")) t = t.substring(0, t.length() - 3);
-            t = t.strip();
-        }
-        String lower = t.toLowerCase(Locale.ROOT);
-        return (lower.startsWith("<!doctype html") || lower.startsWith("<html")) ? t : null;
+        String lower = text.toLowerCase(Locale.ROOT);
+        int start = lower.indexOf("<!doctype html");
+        if (start < 0) start = lower.indexOf("<html");
+        if (start < 0) return null;
+        int closeTag = lower.lastIndexOf("</html>");
+        int end = closeTag >= 0 ? closeTag + "</html>".length() : text.length();
+        return text.substring(start, end).strip();
     }
 
     /**

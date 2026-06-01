@@ -296,31 +296,28 @@ public class GraphPattern {
     }
 
     /**
-     * Find the most-downstream node whose output is a complete HTML document. Walks the
-     * topological order in reverse so the latest producer wins. Strips an optional ```html
-     * code fence the model sometimes adds despite the contract telling it not to.
+     * Find the most-downstream node whose output CONTAINS a complete HTML document. Walks the
+     * topological order in reverse so the latest producer wins. Capable models often narrate
+     * before emitting the document, so we locate the {@code <!doctype html>}/{@code <html>}
+     * marker ANYWHERE in the output — a start-anchored check would miss prose-prefixed HTML.
      */
     private static String findHtmlOutput(List<String> order, Map<String, String> outputs) {
         for (int i = order.size() - 1; i >= 0; i--) {
-            String raw = outputs.get(order.get(i));
-            if (raw == null) continue;
-            String stripped = stripFence(raw).strip();
-            String lower = stripped.toLowerCase(Locale.ROOT);
-            if (lower.startsWith("<!doctype html") || lower.startsWith("<html")) {
-                return stripped;
-            }
+            String html = extractHtml(outputs.get(order.get(i)));
+            if (html != null) return html;
         }
         return null;
     }
 
-    private static String stripFence(String s) {
-        String t = s.strip();
-        if (t.startsWith("```")) {
-            int firstNl = t.indexOf('\n');
-            if (firstNl > 0) t = t.substring(firstNl + 1);
-            if (t.endsWith("```")) t = t.substring(0, t.length() - 3);
-        }
-        return t;
+    private static String extractHtml(String raw) {
+        if (raw == null) return null;
+        String lower = raw.toLowerCase(Locale.ROOT);
+        int start = lower.indexOf("<!doctype html");
+        if (start < 0) start = lower.indexOf("<html");
+        if (start < 0) return null;
+        int closeTag = lower.lastIndexOf("</html>");
+        int end = closeTag >= 0 ? closeTag + "</html>".length() : raw.length();
+        return raw.substring(start, end).strip();
     }
 
     /**
