@@ -303,8 +303,9 @@ public class SwarmPattern {
                     pendingMessage = "The Frontend developer could not deliver a working index.html. "
                             + "You are code-capable: BUILD the complete, runnable index.html yourself "
                             + "from the brief and any spec in shared knowledge (doctype to </html>, all "
-                            + "CSS/JS inline, every feature implemented, no placeholders), then hand off "
-                            + "to the next peer with the COMPLETE document in the `context` field.";
+                            + "CSS/JS inline, every feature implemented, no placeholders). Emit the "
+                            + "COMPLETE document as your REPLY and STOP — do NOT call any tool; the "
+                            + "framework captures it and routes it to the next peer for you.";
                     current = builder;
                     continue;
                 }
@@ -343,7 +344,9 @@ public class SwarmPattern {
                             current.id(), nextUnconsulted.id());
                     pendingMessage = "Continue the quest. Previous agent (" + current.name()
                             + ") produced the work in shared knowledge. Do your specialist part, "
-                            + "then hand off to the next peer.";
+                            + "then deliver it the way your role contract specifies (emit the "
+                            + "index.html as your reply if you are a developer / fix-capable "
+                            + "reviewer or analyst; otherwise hand off with your notes).";
                     current = nextUnconsulted;
                     continue;
                 }
@@ -567,13 +570,17 @@ public class SwarmPattern {
                     + "by calling writeResult with that complete document as `content` now. "
                     + "Otherwise reply with the final answer.");
         } else {
-            sb.append("Peers NOT yet consulted (you MUST hand off to one of these before the "
-                    + "quest can ship): ").append(String.join(", ", notConsulted)).append(".\n");
-            sb.append("Do your specialist part, then call handoff_to_agent to one of the "
-                    + "unconsulted peers. If you produced or corrected the index.html, paste the "
-                    + "COMPLETE document (doctype to </html>) into the `context` field so the next "
-                    + "peer receives your code; otherwise share your spec / notes in `context`. Do "
-                    + "NOT call writeResult yet — it will be rejected until every peer has contributed.");
+            sb.append("Peers NOT yet consulted (the quest cannot ship until each has "
+                    + "contributed): ").append(String.join(", ", notConsulted)).append(".\n");
+            sb.append("Do your specialist part, then deliver it the way your ROLE CONTRACT "
+                    + "specifies: if your contract says to emit the complete index.html as your "
+                    + "REPLY (Frontend developer, fix-capable Reviewer / Performance Analyst), do "
+                    + "that and STOP — do NOT call any tool; the framework captures your HTML and "
+                    + "routes it to the next peer for you. Otherwise (you produce a spec, plan, or "
+                    + "review notes) call handoff_to_agent to one of the unconsulted peers with "
+                    + "your text in the `context` field. Never paste a full index.html into a tool "
+                    + "argument. Do NOT call writeResult — it will be rejected until every peer "
+                    + "has contributed.");
         }
         return sb.toString();
     }

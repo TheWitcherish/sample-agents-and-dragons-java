@@ -106,27 +106,36 @@ public final class RoleContracts {
      * contributed, so the Frontend dev MUST NOT try to ship — the un-overridden
      * {@link #FRONTEND_UI_CONTRACT} ("your ONLY successful response is a call to
      * {@code writeResult}") would deadlock against the gate and push the model toward prose.
-     * Instead the dev IMPLEMENTS the complete {@code index.html} and hands it to the next
-     * peer through the {@code handoff_to_agent} {@code context} field. The framework also
-     * captures the HTML server-side from the reply/context, so a downstream Code Reviewer
-     * always receives the real source to audit and correct.
+     *
+     * <p><b>Delivery via the reply, not the handoff context.</b> The swarm's
+     * {@code handoff_to_agent} tool is {@code returnDirect=true} — when a peer calls it, the
+     * tool's ack string becomes the turn's {@code .content()}, so the model's generated HTML
+     * is <em>lost</em> from the reply. The previous contract told the dev to paste the whole
+     * {@code index.html} into the handoff {@code context} JSON argument, which forced a capable
+     * model to emit the entire 15-20K-token document twice (once as its turn, once inside the
+     * tool arg) — overrunning {@code maxTokens} and tripping strict-JSON on the giant multi-line
+     * argument, so the handoff never landed and the dev appeared "stuck". The fix: emit the
+     * complete {@code index.html} as the REPLY and STOP (no tool call). The framework captures
+     * it server-side from the reply and force-routes to the next unconsulted peer — the same
+     * proven path {@code FRONTEND_UI_INLINE_CONTRACT} uses in Graph/Orchestrator.
      */
     private static final String FRONTEND_UI_SWARM_CONTRACT = """
 
             --- ROLE CONTRACT: Frontend UI Developer (swarm peer) ---
-            You IMPLEMENT the deliverable. Write the complete, self-contained `index.html` \
-            document — starting with `<!DOCTYPE html>` and ending with `</html>`, all CSS in \
-            <style> tags, all JavaScript in <script> tags, no external URLs. Implement EVERY \
-            feature in the brief — no `TODO` placeholders, no stub functions, game logic must \
-            run when the file is opened in a browser. If the shared knowledge already contains \
-            a spec (e.g. from a Game Logic Architect), implement it faithfully. If a Code \
-            Reviewer hands back with requested changes and the current index.html, apply their \
-            fixes and produce the full updated document. \
-            Do NOT call `writeResult` — it is REJECTED until every peer has contributed. \
-            Instead, call `handoff_to_agent` to the next unconsulted peer (typically the Code \
-            Reviewer) and paste your COMPLETE index.html (doctype to </html>) into the \
-            `context` field — that is the channel that carries your code to the reviewer. \
-            Do NOT wrap the HTML in markdown fences (```html). Hand off exactly once, then stop.""";
+            You IMPLEMENT the deliverable. Your REPLY MUST be the complete, self-contained \
+            `index.html` document as raw text — starting with `<!DOCTYPE html>` and ending with \
+            `</html>`, all CSS in <style> tags, all JavaScript in <script> tags, no external \
+            URLs. Implement EVERY feature in the brief — no `TODO` placeholders, no stub \
+            functions; game logic must run when the file is opened in a browser. If the shared \
+            knowledge contains a spec (e.g. from a Game Logic Architect), implement it \
+            faithfully. If a Code Reviewer returned changes and the current index.html, apply \
+            their fixes and emit the full updated document. \
+            Deliver your work as your REPLY, then STOP. Do NOT call `handoff_to_agent`, do NOT \
+            call `writeResult`, and do NOT paste the HTML into any tool argument — the framework \
+            captures the index.html from your reply and routes it to the next peer (the Code \
+            Reviewer) automatically. Do NOT wrap the HTML in markdown fences (```html) and do \
+            NOT add prose preambles like "Here's the code:"; begin your reply with \
+            `<!DOCTYPE html>` on the first line — any non-HTML lines corrupt the artefact.""";
 
     private static final String CODE_REVIEWER_CONTRACT = """
 
@@ -171,13 +180,13 @@ public final class RoleContracts {
             artefact. Begin your reply with `<!DOCTYPE html>` on the first line.""";
 
     /**
-     * Fix-capable Code Reviewer contract for Swarm runs (delivery via handoff context).
+     * Fix-capable Code Reviewer contract for Swarm runs (delivery via the reply).
      *
-     * <p>Swarm peers exchange the running deliverable through the {@code handoff_to_agent}
-     * {@code context} field, not as a final reply (the shipper calls {@code writeResult} last,
-     * once the {@link #SWARM_PEER_EPILOGUE ShipGate} opens). So a fix-capable reviewer puts its
-     * <em>corrected</em> HTML into the {@code context} field on handoff, ensuring the shipper
-     * ships the fixed version rather than the Frontend's original.
+     * <p>Like {@link #FRONTEND_UI_SWARM_CONTRACT}, the reviewer emits its corrected
+     * {@code index.html} as its REPLY rather than pasting it into the {@code handoff_to_agent}
+     * {@code context} argument. The handoff tool is {@code returnDirect=true}, so a document
+     * placed in its argument forces the model to emit the whole file twice and is lost from the
+     * reply anyway; the framework captures HTML from the reply server-side and routes onward.
      */
     private static final String CODE_REVIEWER_FIX_SWARM_CONTRACT = """
 
@@ -188,11 +197,14 @@ public final class RoleContracts {
             Audit it for syntax, edge cases, responsive / mobile / touch design, \
             accessibility, cross-browser compatibility, and security — then ACTUALLY FIX \
             every blocking bug you find. You are empowered to rewrite the implementation so \
-            the shipped artefact is functional. When you hand off, put the COMPLETE corrected, \
+            the shipped artefact is functional. Your REPLY MUST be the COMPLETE corrected, \
             self-contained `index.html` (doctype to </html>, all CSS/JS inline, no external \
-            URLs) into the `context` field of `handoff_to_agent` so the shipper ships YOUR \
-            corrected version. If the code is already correct, pass it through unchanged in \
-            `context`. Do NOT call `writeResult` yourself; hand off to the shipper.""";
+            URLs) as raw text. If the code is already correct, reply with it UNCHANGED (still \
+            the full document). Deliver it as your REPLY, then STOP — do NOT call \
+            `handoff_to_agent`, do NOT call `writeResult`, and do NOT paste the HTML into any \
+            tool argument; the framework captures your corrected document from the reply and \
+            routes it onward. Do NOT wrap it in markdown fences (```html) or prepend a prose \
+            verdict; begin your reply with `<!DOCTYPE html>` on the first line.""";
 
     private static final String GAME_LOGIC_ARCHITECT_CONTRACT = """
 
@@ -242,8 +254,9 @@ public final class RoleContracts {
             with `<!DOCTYPE html>` on the first line.""";
 
     /**
-     * Fix-capable Performance Analyst contract for Swarm runs (delivery via handoff context).
-     * Mirrors {@link #CODE_REVIEWER_FIX_SWARM_CONTRACT}.
+     * Fix-capable Performance Analyst contract for Swarm runs (delivery via the reply).
+     * Mirrors {@link #CODE_REVIEWER_FIX_SWARM_CONTRACT}: emits the optimised document as its
+     * reply rather than inside the {@code returnDirect=true} handoff argument.
      */
     private static final String PERFORMANCE_ANALYST_FIX_SWARM_CONTRACT = """
 
@@ -252,11 +265,14 @@ public final class RoleContracts {
             input (the framework captures it from the previous peer). Optimise THAT document. \
             APPLY performance optimisations directly to it (rendering, memory, algorithmic, \
             mobile) — you are empowered to rewrite the implementation, but never regress a \
-            feature for speed. When you hand off, put the COMPLETE optimised, self-contained \
-            `index.html` (doctype to </html>, all CSS/JS inline, no external URLs) into the \
-            `context` field of `handoff_to_agent` so the shipper ships YOUR optimised \
-            version. If no meaningful optimisation applies, pass it through unchanged in \
-            `context`. Do NOT call `writeResult` yourself; hand off to the shipper.""";
+            feature for speed. Your REPLY MUST be the COMPLETE optimised, self-contained \
+            `index.html` (doctype to </html>, all CSS/JS inline, no external URLs) as raw text. \
+            If no meaningful optimisation applies, reply with the document UNCHANGED. Deliver \
+            it as your REPLY, then STOP — do NOT call `handoff_to_agent`, do NOT call \
+            `writeResult`, and do NOT paste the HTML into any tool argument; the framework \
+            captures your optimised document from the reply and routes it onward. Do NOT wrap \
+            it in markdown fences (```html) or prepend a prose directive list; begin your reply \
+            with `<!DOCTYPE html>` on the first line.""";
 
     private static final String COORDINATOR_CONTRACT = """
 
@@ -331,14 +347,20 @@ public final class RoleContracts {
             --- PATTERN: Swarm (you are a peer) ---
             This quest is a TEAM effort: every peer in the roster MUST contribute before \
             the deliverable ships. Your input lists the peers who have NOT yet been \
-            consulted. While that list is non-empty you MUST call `handoff_to_agent` to \
-            pass control to one of them — do NOT attempt to finish the quest or call \
-            `writeResult` yourself (it will be REJECTED until every peer has contributed). \
-            Do your role's work, then hand off the running result (HTML, spec, or review \
-            notes) to the next unconsulted peer via the `context` field. Only when no \
-            peer remains unconsulted may the designated shipper call `writeResult`. \
-            `handoff_to_agent` is `returnDirect=true`, so calling it ends your turn \
-            immediately — call it exactly once and stop.""";
+            consulted. Do NOT call `writeResult` yourself — it is REJECTED until every peer \
+            has contributed; only the designated shipper ships, and only once the roster is \
+            complete. Do your role's work, then deliver it ONE of two ways, per your role \
+            contract above: \
+            (A) If your role contract says to deliver the `index.html` as your REPLY \
+            (the Frontend developer and any fix-capable Reviewer / Performance Analyst), \
+            emit the COMPLETE document as your reply and STOP — do NOT call any tool. The \
+            framework captures your HTML and routes it to the next unconsulted peer for you. \
+            (B) Otherwise (you produce a spec, plan, or review notes — small text), call \
+            `handoff_to_agent` exactly once to the next unconsulted peer, putting your output \
+            in the `context` field, then stop (`handoff_to_agent` is `returnDirect=true`, so \
+            it ends your turn immediately). \
+            Never paste a full `index.html` into a tool argument — large documents belong in \
+            your reply (mode A), never in `context`.""";
 
     /**
      * Entrypoint variant of {@link #SWARM_PEER_EPILOGUE}. The user designates one agent as
