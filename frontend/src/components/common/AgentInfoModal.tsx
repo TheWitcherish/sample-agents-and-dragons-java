@@ -89,9 +89,6 @@ const AgentInfoModal: React.FC<AgentInfoModalProps> = ({ agent, onClose }) => {
           </div>
         </div>
         <div style={{ marginBottom: '15px' }}>
-          <strong style={{ color: '#f4a261' }}>Cost:</strong> 💎 {agent.cost}
-        </div>
-        <div style={{ marginBottom: '15px' }}>
           <strong style={{ color: '#f4a261' }}>Model:</strong> {agent.modelDisplayName || agent.model}
         </div>
         <div style={{ marginBottom: '15px' }}>

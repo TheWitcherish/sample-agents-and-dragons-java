@@ -40,8 +40,6 @@ const TeamAssemblyPage: React.FC = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [lastClickedNode, setLastClickedNode] = useState<{id: string, timestamp: number} | null>(null);
   const [teamNameExists, setTeamNameExists] = useState(false);
-  const MAX_GEMS = 10;
-  const gemsUsed = selectedAgents.reduce((sum, agent) => sum + agent.cost, 0);
 
   const createNodes = useCallback((agentsList: Agent[]) => agentsList.map((agent, index) => {
     const savedPosition = agentPositions.get(agent.id);
@@ -73,7 +71,6 @@ const TeamAssemblyPage: React.FC = () => {
               <span style={{ background: 'linear-gradient(135deg, #edf2f7 0%, #e2e8f0 100%)', color: '#4a5568', padding: '0.25rem 0.5rem', borderRadius: '12px', fontSize: '0.625rem', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '2px', boxShadow: '0 1px 2px rgba(0, 0, 0, 0.1)', border: '1px solid rgba(0, 0, 0, 0.05)' }}>{agent.speed || 0}% ⚡</span>
               <span style={{ background: 'linear-gradient(135deg, #edf2f7 0%, #e2e8f0 100%)', color: '#4a5568', padding: '0.25rem 0.5rem', borderRadius: '12px', fontSize: '0.625rem', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '2px', boxShadow: '0 1px 2px rgba(0, 0, 0, 0.1)', border: '1px solid rgba(0, 0, 0, 0.05)' }}>{agent.precision || 0}% 🎯</span>
               <span style={{ background: 'linear-gradient(135deg, #edf2f7 0%, #e2e8f0 100%)', color: '#4a5568', padding: '0.25rem 0.5rem', borderRadius: '12px', fontSize: '0.625rem', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '2px', boxShadow: '0 1px 2px rgba(0, 0, 0, 0.1)', border: '1px solid rgba(0, 0, 0, 0.05)' }}>{agent.frugality || 0}% 💰</span>
-              <span style={{ background: 'linear-gradient(135deg, #edf2f7 0%, #e2e8f0 100%)', color: '#4a5568', padding: '0.25rem 0.5rem', borderRadius: '12px', fontSize: '0.625rem', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '2px', boxShadow: '0 1px 2px rgba(0, 0, 0, 0.1)', border: '1px solid rgba(0, 0, 0, 0.05)' }}>{agent.cost || 0} 💎</span>
             </div>
           </div>
           <FaCrown
@@ -186,8 +183,6 @@ const TeamAssemblyPage: React.FC = () => {
         }
         return prev.filter(a => a.id !== agent.id);
       } else {
-        if (gemsUsed + agent.cost > MAX_GEMS) return prev;
-        
         if (teamPattern === 'mono') {
           const guides = getPatternGuides(teamPattern);
           const guideNodes = guides.nodes.filter(g => !g.id.startsWith('guide-label'));
@@ -396,27 +391,21 @@ const TeamAssemblyPage: React.FC = () => {
               >
                 {filteredAgents.map((agent) => {
               const isSelected = selectedAgents.find(a => a.id === agent.id);
-              const canAfford = gemsUsed + agent.cost <= MAX_GEMS;
-              const isDisabled = !isSelected && !canAfford;
               return (
-                <div 
+                <div
                   key={agent.id}
-                  onClick={() => !isDisabled && toggleAgent(agent as Agent)}
+                  onClick={() => toggleAgent(agent as Agent)}
                   style={{
                     background: isSelected ? 'rgba(244, 162, 97, 0.3)' : 'rgba(42, 157, 143, 0.2)',
                     border: `2px solid ${isSelected ? '#f4a261' : '#2a9d8f'}`,
                     borderRadius: '10px',
                     padding: '12px',
                     marginBottom: '10px',
-                    cursor: isDisabled ? 'not-allowed' : 'pointer',
+                    cursor: 'pointer',
                     transition: 'all 0.3s ease',
-                    position: 'relative',
-                    opacity: isDisabled ? 0.5 : 1
+                    position: 'relative'
                   }}
                 >
-                  <div style={{ position: 'absolute', top: '4px', right: '8px', fontSize: '0.85rem', fontWeight: '600', color: '#f4a261' }}>
-                    💎 {agent.cost}
-                  </div>
                   <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                     {agent.avatar ? (
                       <img src={agent.avatar} alt={agent.name} style={{ width: '50px', height: '50px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
@@ -508,10 +497,7 @@ const TeamAssemblyPage: React.FC = () => {
         </div>
 
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-            <div style={{ fontSize: '1rem', fontWeight: '600', color: gemsUsed > MAX_GEMS ? '#ef4444' : '#f4a261' }}>
-              💎 Gems used: {gemsUsed} / {MAX_GEMS}
-            </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginBottom: '10px' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem', cursor: 'pointer' }}>
               <input
                 type="checkbox"
