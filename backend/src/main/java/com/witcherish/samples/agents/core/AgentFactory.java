@@ -105,9 +105,13 @@ public class AgentFactory {
                 .defaultOptions(ToolCallingChatOptions.builder()
                         .model(BedrockModels.resolve(def.model()))
                         .temperature(0.3)
-                        // Tool-heavy multi-turn chains (orchestrator, swarm) blow past the
-                        // ~4096-token default. 8192 leaves headroom for a full HTML deliverable.
-                        .maxTokens(8192)
+                        // A full inline game (levels, power-ups, leaderboard, explosion +
+                        // game-over animations, all CSS/JS in one file) runs well past 8192
+                        // output tokens. At 8192 the model stopped mid-<html>, so the reviewer
+                        // received a TRUNCATED, broken document and rebuilt it from scratch.
+                        // 32768 fits a complete deliverable and is supported across the Claude 4
+                        // family on Bedrock (Haiku/Sonnet/Opus).
+                        .maxTokens(32768)
                         .build())
                 .defaultAdvisors(advisor, toolCallAdvisor);
 
