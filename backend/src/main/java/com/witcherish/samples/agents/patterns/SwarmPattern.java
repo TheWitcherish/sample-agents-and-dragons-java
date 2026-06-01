@@ -58,6 +58,15 @@ public class SwarmPattern {
     private static final int MAX_ITERATIONS = 20;
 
     /**
+     * How many extra turns we grant an implementer (Frontend) peer that ends its turn without
+     * having produced a complete {@code index.html}. A weak junior model often hands off with
+     * prose or a stub instead of the document; "took a turn" must not count as "delivered the
+     * artefact". The HTML-readiness gate (see {@link #run}) bounces control back to the
+     * implementer up to this many times before escalating to a code-capable peer.
+     */
+    private static final int MAX_BUILD_RETRIES = 2;
+
+    /**
      * Ping-pong detection — the safety net that fires when peers loop on each other
      * without making progress (e.g. Architect → Reviewer → Architect → Reviewer …).
      * Mirrors Strands' {@code repetitive_handoff_detection_window} +
@@ -200,6 +209,7 @@ public class SwarmPattern {
         int iterations = 0;
         int handoffCount = 0;
         int shipNudges = 0;                      // bounded retries to coax the shipper to ship
+        int buildRetries = 0;                    // bounded retries to make the implementer actually build the HTML
 
         log.info("[swarm] entrypoint={} team={}", entrypointDef.name(),
                 team.agents().stream().map(AgentDefinition::name).toList());
@@ -240,21 +250,73 @@ public class SwarmPattern {
                     peer.advisor().totalTokens(),
                     peer.advisor().totalLatencyMs());
 
-            // This peer has now contributed — record it so the ShipGate and the
-            // forced-routing logic below can tell who is still missing from the roster.
-            consulted.add(current.id());
-
-            // Capture an HTML deliverable straight from the reply, if the peer emitted one
-            // (the Frontend dev implements index.html; a fix-capable reviewer returns the
-            // corrected document). The handoff `context` field below is the LLM-driven
-            // channel; this reply scan is the safety net for when the model puts the code in
-            // its answer instead of the context. Latest capture wins.
+            // Capture an HTML deliverable from BOTH channels this peer could have used:
+            //  (1) its reply text (the Frontend dev implements index.html; a fix-capable
+            //      reviewer returns the corrected document), and
+            //  (2) the handoff `context` field (the LLM-driven, intended channel).
+            // Latest capture wins, and context beats reply when both are present (it's the
+            // deliberate channel). We capture BEFORE marking the peer consulted so the
+            // HTML-readiness gate below can tell whether an implementer actually built anything.
             String htmlFromReply = extractHtml(reply);
             if (htmlFromReply != null) {
                 htmlHolder.set(htmlFromReply);
                 log.info("[swarm] captured index.html ({} chars) from {}'s reply",
                         htmlFromReply.length(), current.name());
             }
+            String htmlFromContext = handoff.requested ? extractHtml(handoff.context) : null;
+            if (htmlFromContext != null) {
+                htmlHolder.set(htmlFromContext);
+                log.info("[swarm] captured index.html ({} chars) from {}'s handoff context",
+                        htmlFromContext.length(), current.name());
+            }
+            boolean producedHtmlThisTurn = htmlFromReply != null || htmlFromContext != null;
+
+            // HTML-READINESS GATE. "Took a turn" is not "delivered the artefact". An
+            // implementer (Frontend) peer that ends its turn without any complete index.html
+            // anywhere in the run is not done — a weak junior model often hands off with prose
+            // or a stub. Bounce control straight back to it with an explicit build order, up to
+            // MAX_BUILD_RETRIES times, BEFORE marking it consulted. If it still hasn't built
+            // after that, escalate to a code-capable peer (reviewer / CTO / analyst) that can
+            // build the index.html from the spec, so the swarm never reaches the reviewer with
+            // an empty deliverable (the "no actual implementation code was included" failure).
+            if (isImplementer(current) && htmlHolder.get() == null) {
+                if (buildRetries < MAX_BUILD_RETRIES) {
+                    buildRetries++;
+                    log.warn("[swarm] iter={} {} (implementer) produced no index.html — build retry {}/{}",
+                            iterations, current.name(), buildRetries, MAX_BUILD_RETRIES);
+                    handoff.reset();
+                    pendingMessage = "You ended your turn WITHOUT delivering the index.html. The "
+                            + "deliverable does not exist yet — there is no code for anyone to "
+                            + "review or ship. You MUST now write the COMPLETE, runnable index.html "
+                            + "(doctype to </html>, all CSS/JS inline, every feature implemented, no "
+                            + "placeholders). Do NOT hand off and do NOT call writeResult until the "
+                            + "full document exists. Output the entire index.html now.";
+                    continue;  // re-run the SAME implementer; do not advance, do not mark consulted
+                }
+                AgentDefinition builder = codeCapablePeer(team, current, consulted);
+                if (builder != null) {
+                    log.warn("[swarm] iter={} {} failed to build index.html after {} retries — "
+                            + "escalating build to {}", iterations, current.name(), buildRetries, builder.name());
+                    consulted.add(current.id());  // the junior had its chances; don't loop on it
+                    telemetry.saveAgentTransition(project.id(), UUID.randomUUID().toString(),
+                            current.id(), builder.id());
+                    pendingMessage = "The Frontend developer could not deliver a working index.html. "
+                            + "You are code-capable: BUILD the complete, runnable index.html yourself "
+                            + "from the brief and any spec in shared knowledge (doctype to </html>, all "
+                            + "CSS/JS inline, every feature implemented, no placeholders), then hand off "
+                            + "to the next peer with the COMPLETE document in the `context` field.";
+                    current = builder;
+                    continue;
+                }
+                // No code-capable peer left to escalate to — fall through and let the run
+                // proceed; the persist-at-end + ShipGate still apply.
+                log.warn("[swarm] iter={} {} produced no index.html and no code-capable peer remains",
+                        iterations, current.name());
+            }
+
+            // This peer has now contributed — record it so the ShipGate and the
+            // forced-routing logic below can tell who is still missing from the roster.
+            consulted.add(current.id());
 
             if (!handoff.requested) {
                 // The agent ended its turn without handing off. Before we accept its reply
@@ -340,16 +402,12 @@ public class SwarmPattern {
                 break;
             }
             if (handoff.context != null && !handoff.context.isBlank()) {
-                // If the peer pasted a complete index.html into the handoff context (the
-                // intended channel per HANDOFF_INPUT_SCHEMA), capture it as the deliverable
-                // and pass a short pointer through sharedKnowledge instead of the full
-                // document — the receiving peer gets the real HTML via the dedicated
-                // "Current index.html" block composeNodeInput injects from htmlHolder.
-                String htmlFromContext = extractHtml(handoff.context);
+                // The handoff context was already scanned for HTML above (and captured into the
+                // holder if present). Here we only update sharedKnowledge: if it was a complete
+                // index.html, pass a short pointer instead of duplicating the document — the
+                // receiving peer gets the real HTML via the dedicated "Current index.html" block
+                // composeNodeInput injects from htmlHolder. Otherwise carry the notes verbatim.
                 if (htmlFromContext != null) {
-                    htmlHolder.set(htmlFromContext);
-                    log.info("[swarm] captured index.html ({} chars) from {}'s handoff context",
-                            htmlFromContext.length(), current.name());
                     sharedKnowledge.put(current.name(),
                             "delivered a complete index.html (" + htmlFromContext.length()
                             + " chars) — see the current index.html below.");
@@ -523,6 +581,35 @@ public class SwarmPattern {
     /** Bedrock tool names must match {@code [a-zA-Z0-9_-]+}. */
     private static String sanitize(String name) {
         return name.replaceAll("[^a-zA-Z0-9_-]", "_");
+    }
+
+    /**
+     * True if this peer's job is to PRODUCE the {@code index.html} (a Frontend UI Developer).
+     * Implementers are held to the HTML-readiness gate: ending a turn without a complete
+     * document means the deliverable doesn't exist yet, so the swarm must not advance.
+     */
+    private static boolean isImplementer(AgentDefinition def) {
+        return def.role() != null && def.role().toLowerCase(Locale.ROOT).contains("frontend");
+    }
+
+    /**
+     * Pick a still-unconsulted peer that can BUILD the HTML from a spec when the implementer
+     * fails — a Code Reviewer, Performance Analyst, or Hands-On CTO (all fix-/code-capable per
+     * their swarm role contracts). Falls back to {@code null} if none remain, in which case the
+     * run proceeds and the persist-at-end / ShipGate safety nets still apply.
+     */
+    private static AgentDefinition codeCapablePeer(Team team, AgentDefinition current, Set<String> consulted) {
+        return team.agents().stream()
+                .filter(a -> !a.id().equals(current.id()))
+                .filter(a -> !consulted.contains(a.id()))
+                .filter(a -> {
+                    String role = a.role() == null ? "" : a.role().toLowerCase(Locale.ROOT);
+                    return role.contains("reviewer") || role.contains("performance")
+                            || role.contains("cto") || role.contains("engineer")
+                            || role.contains("developer");
+                })
+                .findFirst()
+                .orElse(null);
     }
 
     private static String summarize(String s) {
