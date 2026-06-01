@@ -392,12 +392,26 @@ public class GraphPattern {
      * Build a node's user prompt. Entry nodes see the original task; dependent nodes
      * additionally receive each direct predecessor's output, labelled with the agent's
      * name and role. This is the "input propagation" rule from the Strands graph docs.
+     *
+     * <p><strong>Fix-capable QA reframing.</strong> When a fix-capable QA node (Code Reviewer
+     * / Performance Analyst) receives a complete {@code index.html} from upstream, the generic
+     * "here's the task, here's the upstream output" framing makes the model treat the original
+     * build brief ("Create a snake-style game…") as a fresh build order and rebuild from
+     * scratch — ignoring the upstream HTML it was supposed to correct. So for that case we
+     * INVERT the framing: lead with the existing {@code index.html} as the artefact to fix,
+     * demote the brief to acceptance criteria, and forbid a from-scratch rebuild. The node's
+     * fix-capable role contract (see {@link RoleContracts}) supplies the "emit the corrected
+     * full document" delivery rule; this prompt supplies the "fix THIS, don't rebuild" intent.
      */
     private static String composeNodePrompt(String task, AgentDefinition def, Set<String> upstream,
                                             Map<String, AgentDefinition> defsById,
                                             Map<String, String> outputs) {
         if (upstream.isEmpty()) {
             return task;
+        }
+        String upstreamHtml = isFixCapableQa(def.role()) ? firstUpstreamHtml(upstream, outputs) : null;
+        if (upstreamHtml != null) {
+            return composeQaFixPrompt(task, def, upstream, defsById, outputs, upstreamHtml);
         }
         StringBuilder sb = new StringBuilder(task);
         sb.append("\n\nYou are the '").append(def.name()).append("' (").append(def.role())
@@ -408,6 +422,57 @@ public class GraphPattern {
               .append(" (").append(srcDef.role()).append(") ---\n")
               .append(outputs.getOrDefault(src, ""));
         }
+        return sb.toString();
+    }
+
+    /**
+     * Roles empowered to CORRECT the upstream HTML in Graph runs — kept in lockstep with the
+     * fix-capable contracts in {@link RoleContracts#forRole}. A Game Logic Architect upstream
+     * of a Frontend node is NOT in this set: it produces a spec, not a fixable artefact.
+     */
+    private static boolean isFixCapableQa(String role) {
+        if (role == null) return false;
+        String r = role.toLowerCase(Locale.ROOT);
+        return r.contains("reviewer") || r.contains("performance");
+    }
+
+    /** The complete index.html from the first direct predecessor that emitted one, else null. */
+    private static String firstUpstreamHtml(Set<String> upstream, Map<String, String> outputs) {
+        for (String src : upstream) {
+            String html = extractHtml(outputs.get(src));
+            if (html != null) return html;
+        }
+        return null;
+    }
+
+    /**
+     * Prompt for a fix-capable QA node that received an upstream {@code index.html}. Leads with
+     * the existing document as the artefact to review/fix, demotes the original brief to
+     * acceptance criteria, and explicitly forbids a from-scratch rebuild. Any additional
+     * non-HTML upstream outputs (e.g. an Architect's spec) are appended as reference context.
+     */
+    private static String composeQaFixPrompt(String task, AgentDefinition def, Set<String> upstream,
+                                             Map<String, AgentDefinition> defsById,
+                                             Map<String, String> outputs, String upstreamHtml) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("You are the '").append(def.name()).append("' (").append(def.role())
+          .append(") node in a graph. The upstream node already produced a complete index.html. ")
+          .append("Your job is to REVIEW and FIX that existing document — do NOT build a new game ")
+          .append("from scratch, do NOT start over. Read the current index.html below, find and fix ")
+          .append("every blocking bug, and return the corrected full document.");
+        sb.append("\n\n--- Current index.html (review and FIX this; do NOT rebuild) ---\n")
+          .append(upstreamHtml);
+        for (String src : upstream) {
+            String raw = outputs.getOrDefault(src, "");
+            if (extractHtml(raw) != null) {
+                continue; // already shown as the current index.html above
+            }
+            AgentDefinition srcDef = defsById.get(src);
+            sb.append("\n\n--- Reference: output from ").append(srcDef.name())
+              .append(" (").append(srcDef.role()).append(") ---\n").append(raw);
+        }
+        sb.append("\n\n--- Acceptance criteria (the original brief — verify the game meets it; ")
+          .append("this is NOT a request to rebuild) ---\n").append(task);
         return sb.toString();
     }
 
