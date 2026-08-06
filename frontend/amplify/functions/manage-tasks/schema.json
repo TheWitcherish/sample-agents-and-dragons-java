@@ -1,0 +1,136 @@
+[
+    {
+        "name": "create_task",
+        "description": "Creates a new task. Tasks are used to track the activities done to achieve a project.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "optional pre-generated UUID for the task (server-side callers can pre-allocate ids so updates correlate; agents should leave this blank)"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "the name of the task"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "precise description of the task, should include relevant details of what needs to be done and how"
+                },
+                "createdBy": {
+                    "type": "string",
+                    "description": "the id of the agent that creates the task"
+                },
+                "assignee": {
+                    "type": "string",
+                    "description": "the id of the agent assigned to the task, can be identical to 'createdBy' field if the task is auto-assigned"
+                },
+                "projectId": {
+                    "type": "string",
+                    "description": "the id of the project if available, if not the tool will try to infer the project from the environment"
+                }
+            },
+            "required": ["name","description", "createdBy", "assignee" ]
+        }
+    },
+    {
+        "name": "update_task",
+        "description": "Updates a task. Task updates are used to track activity relative to task achievement",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "taskId": {
+                    "type": "string"
+                },
+                "newStatus": {
+                    "type": "string",
+                    "description": "the new status of the task, can only take the values : 'CREATED', 'IN_PROGRESS', 'COMPLETED','ABORTED','ON_ERROR'"
+                },
+                "newComment": {
+                    "type": "string",
+                    "description": "precise description of the task update, should include relevant details of what was done and how"
+                },
+                "updatedBy": {
+                    "type": "string",
+                    "description": "the id of the agent that updates the task"
+                }
+            },
+            "required": ["taskId", "newStatus", "newComment", "updatedBy"]
+        }
+    },
+    {
+        "name": "read_task",
+        "description": "Reads a task. Helpful to find all needed information to accomplish the task.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "taskId": {
+                    "type": "string"
+                }
+            },
+            "required": ["taskId"]
+        }
+    },
+    {
+        "name": "save_agent_state",
+        "description": "Records or updates an agent's runtime state for a project (cycle counts, token usage, latency). Each call appends a new state snapshot to the agent's run history.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "projectId": { "type": "string", "description": "the id of the project the agent is working on" },
+                "agentId": { "type": "string", "description": "the agent's id within the team" },
+                "agentName": { "type": "string", "description": "human-readable agent name" },
+                "status": { "type": "string", "description": "READY | WORKING | THINKING | USING_TOOL | WAITING | STOPPED" },
+                "cycleCount": { "type": "integer" },
+                "messageCount": { "type": "integer" },
+                "inputTokens": { "type": "integer" },
+                "outputTokens": { "type": "integer" },
+                "totalTokens": { "type": "integer" },
+                "latency": { "type": "integer", "description": "wall-clock latency in milliseconds for the latest cycle" },
+                "cycleDurations": { "type": "array", "items": { "type": "number" }, "description": "per-cycle wall-clock durations in milliseconds" }
+            },
+            "required": ["projectId", "agentId", "agentName", "status"]
+        }
+    },
+    {
+        "name": "save_agent_transition",
+        "description": "Records a directed handoff or delegation from one agent to another within a project's run.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "projectId": { "type": "string" },
+                "transitionId": { "type": "string", "description": "unique id for this transition (uuid recommended)" },
+                "sourceAgentId": { "type": "string" },
+                "targetAgentId": { "type": "string" }
+            },
+            "required": ["projectId", "transitionId", "sourceAgentId", "targetAgentId"]
+        }
+    },
+    {
+        "name": "save_agent_message",
+        "description": "Records a message produced by an agent during a project's run (system prompt, user input, model output, tool result).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "projectId": { "type": "string" },
+                "agentId": { "type": "string" },
+                "role": { "type": "string", "description": "system | user | assistant | tool" },
+                "text": { "type": "string" }
+            },
+            "required": ["projectId", "agentId", "role", "text"]
+        }
+    },
+    {
+        "name": "save_project_state",
+        "description": "Updates the high-level state of a project (status, deliverable URL).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "projectId": { "type": "string" },
+                "status": { "type": "string", "description": "CREATED | IN_PROGRESS | COMPLETED | ABORTED | ON_ERROR" },
+                "url": { "type": "string", "description": "deliverable URL once the project completes (s3://, https://, file:// allowed)" }
+            },
+            "required": ["projectId", "status"]
+        }
+    }
+]

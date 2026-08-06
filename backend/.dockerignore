@@ -1,0 +1,14 @@
+target/
+.idea/
+.vscode/
+.claude/
+.mcp.json
+.mcp/
+.kiro/
+.cursor/
+.windsurf/
+*.iml
+.DS_Store
+.git/
+.gitignore
+*.log

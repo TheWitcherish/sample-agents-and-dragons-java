@@ -1,0 +1,42 @@
+{
+  "project": {
+    "id": "demo-swarm-001",
+    "questId": "quest-snake",
+    "name": "Snake",
+    "prompt": "Create a snake-style game. Add levels with different layouts, power-ups (speed boost, invincibility), leaderboard, and smooth animations to the game. Include explosion animations and game over screen. Keep it simple but playable on ipad tablet with small screen and touch screen on a smartphone."
+  },
+  "team": {
+    "name": "Witcher Swarm Crew",
+    "prompt": "A peer crew that collaborates by handing off to each other. Every peer contributes its specialty before the game ships — the runtime routes control through any peer that has not yet taken a turn, so pass your work forward in the handoff `context` rather than trying to finish alone. The deliverable is a single self-contained index.html; the shipping peer calls writeResult once the whole crew has weighed in.",
+    "pattern": "swarm",
+    "entrypoint": "agent-architect",
+    "agents": [
+      {
+        "id": "agent-architect",
+        "name": "Architect",
+        "model": "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "prompt": "You are the Architect. Sketch a TERSE plan (under 140 words, bullets only) for the snake game: data shapes (snake body, food, power-ups, level layouts, leaderboard entry), key user events (swipe/tap to steer, pause, restart), and order of operations (tick loop, collision, scoring, level progression). No code. Then hand off to an unconsulted peer, passing the full plan in the `context` field.",
+        "role": "logic and architecture",
+        "tools": []
+      },
+      {
+        "id": "agent-frontend",
+        "name": "Frontend Developer",
+        "model": "eu.anthropic.claude-sonnet-4-6",
+        "prompt": "You are the Frontend Developer. Using the architecture plan in shared knowledge, write a SINGLE self-contained `<!DOCTYPE html>…</html>` document with embedded CSS and JavaScript — no external deps, touch-friendly, with levels, power-ups (speed boost, invincibility), a leaderboard, smooth animations, explosion effects, and a game-over screen. Then hand off to an unconsulted peer, passing the FULL HTML document in the `context` field. Do not finish the quest yourself.",
+        "role": "frontend implementation",
+        "tools": []
+      },
+      {
+        "id": "agent-reviewer",
+        "name": "Reviewer",
+        "model": "eu.anthropic.claude-sonnet-4-6",
+        "prompt": "You are the Reviewer. A complete snake-game HTML document sits in shared knowledge. Check it for touch controls, level layouts, power-ups, leaderboard, explosion + game-over screens, and obvious bugs. If peers still need to contribute, hand off to an unconsulted one with concrete notes in `context`. Once the whole crew has contributed, the shipping peer assembles the final HTML and calls writeResult exactly once with it as `content`.",
+        "role": "code review and shipping",
+        "tools": []
+      }
+    ],
+    "connections": []
+  },
+  "config": { "gateway_url": "", "token": "", "s3_bucket_name": "" }
+}

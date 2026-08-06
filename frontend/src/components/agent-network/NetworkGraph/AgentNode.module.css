@@ -1,0 +1,137 @@
+.container {
+  padding: 10px;
+  border: 2px solid #f4a261;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #1e6b5c 0%, #2a9d8f 100%);
+  color: #f4f1de;
+  min-width: 120px;
+  width: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+  font-family: 'Cinzel', serif;
+}
+
+.avatarContainer {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.avatar {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.statusBubble {
+  position: absolute;
+  top: -30px;
+  left: -25px;
+  width: 40px;
+  height: 40px;
+  background: #ffffff;
+  border: 3px solid #000000;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  color: #2d3748;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 10;
+}
+
+.smallBubble {
+  position: absolute;
+  top: -8px;
+  left: 7px;
+  width: 12px;
+  height: 12px;
+  background: #ffffff;
+  border: 2px solid #000000;
+  border-radius: 50%;
+  z-index: 11;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.smallBubble2 {
+  position: absolute;
+  top: -3px;
+  left: 13px;
+  width: 8px;
+  height: 8px;
+  background: #ffffff;
+  border: 2px solid #000000;
+  border-radius: 50%;
+  z-index: 12;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.label {
+  font-weight: bold;
+  font-size: 18px;
+  text-align: center;
+}
+
+.role {
+  font-weight: bold;
+  font-size: 14px;
+  color: #f4f1de;
+  opacity: 0.8;
+  text-align: center;
+}
+
+.model {
+  font-size: 10px;
+  color: #f4f1de;
+  opacity: 0.7;
+}
+
+.handle {
+  width: 12px;
+  height: 8px;
+  border: 1px solid #f4a261;
+  border-radius: 4px;
+  background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 25%, #ffffff 50%, #cbd5e1 75%, #94a3b8 100%);
+  box-shadow: inset 0 1px 2px rgba(255,255,255,0.8), inset 0 -1px 2px rgba(0,0,0,0.2);
+}
+
+.handleTarget {
+  top: 0;
+}
+
+.handleSource {
+  bottom: 0;
+}
+
+.agentStats {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.stat {
+  background: linear-gradient(135deg, #edf2f7 0%, #e2e8f0 100%);
+  color: #4a5568;
+  padding: 0.25rem 0.5rem;
+  border-radius: 12px;
+  font-size: 0.625rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+
+
+.statusCircle {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+}
