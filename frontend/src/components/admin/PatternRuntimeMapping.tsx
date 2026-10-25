@@ -136,7 +136,7 @@ const getPatternDescription = (pattern: string): string => {
     case 'mono':
       return 'Single agent handles all tasks';
     case 'orchestrator':
-      return 'Orchestrator agent delegates to specialists wrapped as tools';
+      return 'Orchestrator agent plans the work, then workers carry out each task';
     case 'swarm':
       return 'Collaborative agents working together';
     case 'graph':
