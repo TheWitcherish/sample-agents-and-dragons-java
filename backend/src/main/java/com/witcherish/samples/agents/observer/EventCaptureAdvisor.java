@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *       useful.</li>
  *   <li>Stream each model turn's text to the Adventure Log via
  *       {@link Session#saveAgentMessage}. Because the factory wires a
- *       {@code ToolCallAdvisor} <em>outside</em> this advisor, the tool-calling loop
+ *       {@code ToolCallingAdvisor} <em>outside</em> this advisor, the tool-calling loop
  *       re-enters {@code adviseCall} once per cycle — so the plan turn, the
  *       "creating the board…" turn, every tool-summary turn, and the final ship all
  *       persist live, instead of only the collapsed {@code .content()} the pattern
@@ -88,7 +88,7 @@ public class EventCaptureAdvisor implements CallAdvisor {
                 : "";
         eventLog.emit(AgentEvent.of(projectId, agentId, agentName, "AFTER_MODEL_CALL", text));
 
-        // Stream this turn to the Adventure Log. ToolCallAdvisor sits outside us, so we're
+        // Stream this turn to the Adventure Log. ToolCallingAdvisor sits outside us, so we're
         // re-entered once per tool-calling cycle: the plan turn, any "doing X now" narration
         // between tool calls, and the final answer each persist as their own message — live,
         // in order. Skip empty turns: a pure tool_use response (no prose) has blank text and

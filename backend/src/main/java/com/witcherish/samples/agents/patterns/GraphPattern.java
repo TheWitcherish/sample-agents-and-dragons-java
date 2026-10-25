@@ -27,10 +27,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
  * Graph pattern — a deterministic DAG of agents.
@@ -42,13 +39,15 @@ import java.util.concurrent.Executors;
  * the original task plus a labelled block per upstream output — exactly the input
  * propagation Strands documents for graphs.
  *
- * <p><strong>Parallel sibling execution.</strong> Independent nodes (no shared dependency
- * chain) run concurrently on virtual threads. The implementation walks Kahn's topological
- * order in <em>batches</em>: every iteration finds the "ready set" — nodes whose
- * dependencies are all satisfied — and dispatches them to a virtual-thread executor
- * via {@link CompletableFuture#runAsync}. {@code allOf(...).join()} waits for the batch.
- * This matches Strands' {@code _execute_nodes_parallel} but stays sequential-looking on
- * the page thanks to JEP-444 virtual threads — no async/await colouring, no event queue.
+ * <p><strong>Parallelization workflow.</strong> Independent nodes (no shared dependency
+ * chain) run through Spring AI's
+ * <a href="https://github.com/spring-projects/spring-ai-examples/tree/main/agentic-patterns/parallelization-workflow">Parallelization
+ * workflow</a> ({@link ParallelizationWorkflow}). The DAG is walked in Kahn's topological order
+ * in <em>batches</em>: every iteration finds the "ready set" — nodes whose dependencies are all
+ * satisfied — fans it out to a fixed worker pool, waits for every node, then aggregates the
+ * outputs programmatically into the shared {@code outputs} map that feeds the next batch. Each
+ * node is a different agent with its own prompt (the "sectioning" variant of the pattern), and
+ * fan-in nodes such as the Finalizer are the aggregation step.
  *
  * <p>Differences from {@link OrchestratorPattern}: there the LLM <em>chooses</em> who
  * runs next; here the <em>topology</em> chooses. That makes Graph the right primitive
@@ -86,11 +85,12 @@ import java.util.concurrent.Executors;
  *       a future {@code HumanReviewPattern} would expose this.</li>
  * </ul>
  *
- * <p>Why hand-rolled rather than depending on {@code spring-ai-alibaba-graph-core}: that
- * library targets Spring AI 2.0.0-M5; we're pinned to Spring AI 1.1.6 stable for AgentCore
- * compatibility. The Alibaba dep is a fine drop-in once 2.x lands.
+ * <p>Why hand-rolled rather than depending on {@code spring-ai-alibaba-graph-core}: the DAG
+ * walk plus Spring AI's Parallelization workflow covers everything the frontend can draw, with
+ * no extra dependency.
  *
  * @see <a href="https://strandsagents.com/docs/user-guide/concepts/multi-agent/graph/">Strands — Graph</a>
+ * @see <a href="https://github.com/spring-projects/spring-ai-examples/tree/main/agentic-patterns/parallelization-workflow">spring-ai-examples — parallelization-workflow</a>
  * @see <a href="https://github.com/habuma/spring-ai-recipes/tree/main/graph-workflow">spring-ai-recipes — graph-workflow</a>
  * @see <a href="https://github.com/habuma/spring-ai-recipes/tree/main/graph-workflow-loop">spring-ai-recipes — graph-workflow-loop (conditional cycles)</a>
  * @see <a href="https://github.com/habuma/spring-ai-recipes/tree/main/graph-workflow-hitl">spring-ai-recipes — graph-workflow-hitl (interruptBefore)</a>
@@ -191,7 +191,8 @@ public class GraphPattern {
         }
 
         String task = Prompts.composeUserPrompt(project, team);
-        // ConcurrentHashMap because sibling nodes write to it from virtual threads in parallel.
+        // Written only by this thread, after each parallel batch is aggregated; read concurrently
+        // by the batch's workers, hence the concurrent map.
         Map<String, String> outputs = new ConcurrentHashMap<>();
         log.info("[graph] order={} entrypoint={}", order, team.entrypoint());
 
@@ -201,35 +202,29 @@ public class GraphPattern {
                     0, 0, 0, 0, 0, 0L);
         }
 
-        // Parallel batched execution, mirroring Strands' Graph._execute_nodes_parallel:
+        // Parallelization workflow per batch:
         // 1. Find the next "ready batch" — every node whose dependencies are all in `outputs`.
-        // 2. Run every node in the batch concurrently on a virtual thread.
-        // 3. Wait for the batch, then loop until all nodes have produced output.
-        //
-        // Java 25 virtual threads keep the code shape identical to a sequential for-loop
-        // — no event-queue scaffolding, no cancellation dance, no async/await colouring.
-        // Each model call still parks the carrier thread on the underlying HTTP I/O.
-        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
-            Set<String> done = ConcurrentHashMap.newKeySet();
-            while (done.size() < order.size()) {
-                List<String> readyBatch = order.stream()
-                        .filter(id -> !done.contains(id))
-                        .filter(id -> done.containsAll(incomingR.get(id)))
-                        .toList();
-                if (readyBatch.isEmpty()) {
-                    throw new IllegalStateException(
-                            "Graph stalled: no ready nodes but " + (order.size() - done.size())
-                                    + " remain. Cycle in connections?");
-                }
-                log.info("[graph] running batch (parallel)={}", readyBatch);
-                List<CompletableFuture<Void>> futures = readyBatch.stream()
-                        .map(nodeId -> CompletableFuture.runAsync(
-                                () -> runNode(nodeId, reachableDefs, incomingR, built, outputs, project, telemetry, task),
-                                pool))
-                        .toList();
-                CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new)).join();
-                done.addAll(readyBatch);
+        // 2. Fan the batch out with ParallelizationWorkflow (one worker per node, run together).
+        // 3. Aggregate: write each node's reply into `outputs` so the next batch can read it.
+        Set<String> done = new LinkedHashSet<>();
+        while (done.size() < order.size()) {
+            List<String> readyBatch = order.stream()
+                    .filter(id -> !done.contains(id))
+                    .filter(id -> done.containsAll(incomingR.get(id)))
+                    .toList();
+            if (readyBatch.isEmpty()) {
+                throw new IllegalStateException(
+                        "Graph stalled: no ready nodes but " + (order.size() - done.size())
+                                + " remain. Cycle in connections?");
             }
+            log.info("[graph] running batch (parallel)={}", readyBatch);
+            List<String> replies = ParallelizationWorkflow.parallel(readyBatch,
+                    nodeId -> runNode(nodeId, reachableDefs, incomingR, built, outputs, project, telemetry, task),
+                    readyBatch.size());
+            for (int i = 0; i < readyBatch.size(); i++) {
+                outputs.put(readyBatch.get(i), replies.get(i));
+            }
+            done.addAll(readyBatch);
         }
 
         // Sinks (no outgoing edges within the reachable subgraph) carry the final
@@ -257,11 +252,11 @@ public class GraphPattern {
     }
 
     /**
-     * Run one node: emit transitions + WORKING, invoke the model, persist the reply,
-     * emit STOPPED. Called from a virtual thread inside the parallel batch so two sibling
-     * nodes execute concurrently without colouring the call site as async.
+     * Run one node: emit transitions + WORKING, invoke the model, emit STOPPED, return the
+     * reply. Called as one worker of the {@link ParallelizationWorkflow} batch, so sibling
+     * nodes execute concurrently; the caller aggregates the replies into {@code outputs}.
      */
-    private void runNode(String nodeId,
+    private String runNode(String nodeId,
                          Map<String, AgentDefinition> defsById,
                          Map<String, Set<String>> incoming,
                          Map<String, BuiltAgent> built,
@@ -284,7 +279,6 @@ public class GraphPattern {
                 node.advisor().totalLatencyMs());
 
         String reply = node.client().prompt().user(nodePrompt).call().content();
-        outputs.put(nodeId, reply == null ? "" : reply);
 
         // EventCaptureAdvisor streams this node's model turns to the Adventure Log per cycle,
         // so the final reply is already persisted — no explicit saveAgentMessage here.
@@ -293,6 +287,7 @@ public class GraphPattern {
                 node.advisor().inputTokens(), node.advisor().outputTokens(),
                 node.advisor().totalTokens(),
                 node.advisor().totalLatencyMs());
+        return reply == null ? "" : reply;
     }
 
     /**

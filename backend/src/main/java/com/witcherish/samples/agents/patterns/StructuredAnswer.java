@@ -56,14 +56,12 @@ public class StructuredAnswer {
     public QuestResult coerce(String freeFormAnswer) {
         String safe = freeFormAnswer == null ? "" : freeFormAnswer;
         try {
-            // Build a minimal tool-less ChatClient with low temperature; we want
-            // deterministic JSON, not creative writing.
+            // Minimal tool-less ChatClient. No temperature: Sonnet 5.5 (the default model)
+            // rejects it; structured output keeps the JSON on rails instead.
             ChatClient formatter = ChatClient.builder(chatModel)
                     .defaultSystem(FORMATTER_SYSTEM)
                     .defaultOptions(ChatOptions.builder()
-                            .temperature(0.0)
-                            .maxTokens(2048)
-                            .build())
+                            .maxTokens(2048))
                     .build();
 
             QuestResult coerced = formatter.prompt()

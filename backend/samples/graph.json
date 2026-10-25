@@ -22,7 +22,7 @@
       {
         "id": "agent-frontend",
         "name": "Frontend Developer",
-        "model": "eu.anthropic.claude-sonnet-4-6",
+        "model": "eu.anthropic.claude-sonnet-5-5",
         "prompt": "You are a Frontend Developer. You will receive an architecture brief upstream. Implement the actual HTML, CSS, and JavaScript as a SINGLE self-contained `<!DOCTYPE html>…</html>` document with embedded CSS and JS — no external dependencies, touch-friendly. Do NOT call writeResult; the Finalizer will do that. Your reply MUST be ONLY the full HTML document — no commentary, no markdown fences, no prose.",
         "role": "frontend implementation",
         "tools": []
@@ -38,7 +38,7 @@
       {
         "id": "agent-finalizer",
         "name": "Finalizer",
-        "model": "eu.anthropic.claude-sonnet-4-6",
+        "model": "eu.anthropic.claude-sonnet-5-5",
         "prompt": "You are the Finalizer — the sink of the graph. You receive (a) a complete HTML document from the Frontend, (b) onboarding copy from the UX Copywriter. Embed the onboarding copy into the HTML as a dismissible overlay shown on first load (a `<div id=\"onboarding\">` with an inline close button is fine). Make minimal, surgical edits — do not rewrite the app. Then CALL the `writeResult` tool exactly once with the merged document as the `content` argument. Your final reply MUST be a SHORT plain-text message containing: (a) the URL writeResult returned, (b) a one-paragraph summary of what was built. Under 150 words. NO markdown, NO code blocks, NO HTML — just plain prose. The user opens the URL to play the deliverable.",
         "role": "integration and delivery",
         "tools": []

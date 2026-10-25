@@ -11,11 +11,11 @@ sample-agents-and-dragons/
 | Tier | Pin |
 |---|---|
 | Java | 25 |
-| Spring Boot | 3.5.14 |
-| Spring AI | 1.1.6 |
-| Spring AI AgentCore | 1.0.0 |
+| Spring Boot | 4.1.2 |
+| Spring AI | 2.0.2 |
+| Spring AI AgentCore | 2.3.0 |
 | MCP SDK | `io.modelcontextprotocol.sdk:mcp-core:1.1.0` |
-| Bedrock model (default) | `eu.anthropic.claude-sonnet-4-6` (cross-region inference profile) |
+| Bedrock model (default) | `eu.anthropic.claude-sonnet-5-5` (cross-region inference profile) |
 | AWS region (default) | `eu-central-1` |
 | Frontend | React 18 + Vite + AWS Amplify Gen 2 |
 
@@ -83,27 +83,27 @@ Each pattern ships a ready-to-curl JSON payload in `backend/samples/`. The `/run
 
 **Expected timing.** ~50-90 seconds. One inference round; nothing parallel.
 
-**The "now you try" hook.** Swap the model from `eu.anthropic.claude-sonnet-4-6` to `eu.anthropic.claude-haiku-4-5-20251001-v1:0` and watch the latency drop ~3x at the cost of HTML quality.
+**The "now you try" hook.** Swap the model from `eu.anthropic.claude-sonnet-5-5` to `eu.anthropic.claude-haiku-4-5-20251001-v1:0` and watch the latency drop ~3x at the cost of HTML quality.
 
 **Pedagogical contrast.** Mono is the *baseline* you measure the multi-agent patterns against. If your problem fits in Mono, the multi-agent overhead is wasted tokens.
 
-### Orchestrator — Pattern 4.2 (Agents as Tools, Strands doctrine)
+### Orchestrator — Orchestrator-Workers workflow (Spring AI)
 
-**The story.** A boss agent decomposes the goal and routes sub-tasks to specialists *wrapped as tools*. Specialists never see each other. The boss synthesises one final answer.
+**The story.** A boss agent reads the goal once and returns a *plan*: an analysis plus an ordered list of sub-tasks, each assigned to one worker. The framework then runs every task on its worker and combines the results. This is Spring AI's [Orchestrator-Workers](https://github.com/spring-projects/spring-ai-examples/tree/main/agentic-patterns/orchestrator-workers) workflow, with one addition for a build pipeline: each worker also sees the earlier workers' outputs, and reviewers get the current `index.html` to fix.
 
 **Sample.** `backend/samples/orchestrator.json` — Coordinator + Architect + Frontend Developer + Reviewer.
 
 **What the audience watches.**
-- The Coordinator calls `Game_Logic_Architect` (a tool, not a peer), then `Frontend_Developer`, then `Code_Reviewer` — visible in the events stream. Each specialist is exposed as a tool with a Bedrock-safe unique name; if two specialists would collide on the same sanitized name, we disambiguate with an id suffix (the same `server___tool` convention MCP uses for cross-server collisions).
-- The frontend specialist calls `writeResult` directly; the boss only forwards the URL.
+- The `[orchestrator-workers] analysis=... tasks=[Task[worker=agent-architect, ...], ...]` log line: the whole routing decision as data, before any worker runs. The plan comes back through Spring AI structured output (`.call().entity(OrchestratorResponse.class)`).
+- Workers run in plan order. The framework ships the latest `index.html` a worker produced (the reviewer's fix, when there is one).
 - Each agent card lighting up READY → WORKING → STOPPED with token + cycle counts (Spring AI's `Usage` metadata, surfaced via `EventCaptureAdvisor`).
 - The Adventure Log filling progressively as agents call `createTask` / `updateTask` over MCP — same wire format as their domain tools, but routed to the `manage-tasks` Lambda for AppSync writes.
 
 **Expected timing.** ~90-150 seconds. 3-4 sequential inference rounds, one per specialist.
 
-**The "now you try" hook.** Add a fifth specialist (e.g., a Performance Auditor) and watch the orchestrator pick the right one for "make this load faster."
+**The "now you try" hook.** Add a fifth worker (e.g., a Performance Analyst) and watch it show up in the plan for "make this load faster."
 
-**Pedagogical contrast.** Orchestrator is **dynamic but centralised** — the LLM picks who runs next. Compare to Graph (topology picks) and Swarm (peers pick).
+**Pedagogical contrast.** Orchestrator is **dynamic but centralised** — the LLM picks the plan, once, up front. Compare to Graph (topology picks) and Swarm (peers pick).
 
 ### Graph — Pattern 4.1 (Workflow DAG)
 
@@ -113,7 +113,7 @@ Each pattern ships a ready-to-curl JSON payload in `backend/samples/`. The `/run
 
 **What the audience watches.**
 - The execution log line `[graph] order=[agent-architect, agent-frontend, agent-ux, agent-finalizer]` — a topological order computed by Kahn's algorithm, deterministic across runs (ties broken by insertion order in the JSON).
-- Frontend and UX light up `WORKING` *at the same time* — independent siblings run concurrently, each on its own Java 25 virtual thread (`Executors.newVirtualThreadPerTaskExecutor()`), and the graph waits on `CompletableFuture.allOf(...)` before the fan-in node starts.
+- Frontend and UX light up `WORKING` *at the same time* — each ready batch runs through Spring AI's [Parallelization workflow](https://github.com/spring-projects/spring-ai-examples/tree/main/agentic-patterns/parallelization-workflow) (`ParallelizationWorkflow.java`): fan out to a worker pool, wait on `CompletableFuture.allOf(...)`, then aggregate the outputs before the fan-in node starts.
 - The Finalizer's input shows two upstream blocks (`--- Output from Frontend (...) ---` and `--- Output from UX Copywriter (...) ---`).
 - The merged HTML at the deliverable URL: Frontend's full document with UX's onboarding overlay woven in at line ~350.
 
@@ -149,7 +149,7 @@ Each pattern ships a ready-to-curl JSON payload in `backend/samples/`. The `/run
 - **One typed return shape.** Orchestrator, Graph, and Swarm all return a `PatternResult` — our mirror of Strands' `MultiAgentResult`. It carries the pattern name, the entrypoint, the final answer, the participating agent ids in execution order, and per-agent telemetry, so the frontend and the `/run` response speak the same vocabulary regardless of which pattern ran.
 - **No agent is silently dropped — each pattern enforces discovery its own way.**
   - **Graph** roots execution at the user-picked entrypoint via a BFS over forward edges. Stray roots and disconnected islands the user never wired to the start are *pruned* (and logged: `[graph] pruning N node(s) unreachable from entrypoint …`), so what runs genuinely originates at the entrypoint — Strands' Graph contract, rather than "fire every zero-indegree node."
-  - **Orchestrator** vends a unique, Bedrock-legal tool name per specialist. Two specialists whose names sanitize to the same string would otherwise collapse into one tool and hide a specialist; we de-collide by suffixing the agent id (the MCP `server___tool` convention).
+  - **Orchestrator** addresses workers by agent id in its plan, so two workers with the same name stay distinct. A plan step naming an unknown worker is logged and skipped, never silently merged.
   - **Swarm** treats the quest as a team effort: a `ShipGate` rejects `writeResult` until every roster peer has been consulted, and the entrypoint epilogue forces a hand-off-first turn so the coordinator can't ship a one-agent answer.
 
 ---
@@ -161,19 +161,19 @@ Our four patterns map onto Mark Heckler's [`spring-ai-recipes`](https://github.c
 | Our pattern | Recipe(s) it leverages | Where to look in our code |
 |---|---|---|
 | **Mono** | [`skills`](https://github.com/habuma/spring-ai-recipes/tree/main/skills), [`todo-write-tool`](https://github.com/habuma/spring-ai-recipes/tree/main/todo-write-tool), [`tool-choice-explanation`](https://github.com/habuma/spring-ai-recipes/tree/main/tool-choice-explanation) | `MonoPattern.java` + `WriteResultTool.java` + `TaskTools.java`. Same `@Tool` POJOs the recipes show, plus a `ToolChoiceExplanation` reasoning sidecar (see below). |
-| **Orchestrator** | [`a2a-client`](https://github.com/habuma/spring-ai-recipes/tree/main/a2a-client) (TaskTool subagents), [`tool-choice-explanation`](https://github.com/habuma/spring-ai-recipes/tree/main/tool-choice-explanation) | `OrchestratorPattern.asTool(...)` hand-rolls what `TaskTool.builder().subagentReferences(...)` does in the recipe — but with hooks for telemetry and reasoning. |
+| **Orchestrator** | [`a2a-client`](https://github.com/habuma/spring-ai-recipes/tree/main/a2a-client) (TaskTool subagents), [`tool-choice-explanation`](https://github.com/habuma/spring-ai-recipes/tree/main/tool-choice-explanation) | `OrchestratorPattern.java` follows Spring AI's [`orchestrator-workers`](https://github.com/spring-projects/spring-ai-examples/tree/main/agentic-patterns/orchestrator-workers) example: a structured plan, then one worker call per task. |
 | **Graph** | [`graph-workflow`](https://github.com/habuma/spring-ai-recipes/tree/main/graph-workflow), [`graph-workflow-loop`](https://github.com/habuma/spring-ai-recipes/tree/main/graph-workflow-loop), [`graph-workflow-hitl`](https://github.com/habuma/spring-ai-recipes/tree/main/graph-workflow-hitl) | `GraphPattern.java` — class Javadoc maps every Alibaba `StateGraph` concept (`addNode`, `addConditionalEdges`, `START`/`END`, `KeyStrategy`/`ReplaceStrategy`, `interruptBefore`) onto our hand-rolled topology so readers can switch between mental models. |
-| **Swarm** | (no direct recipe — Strands-native) | `SwarmPattern.java`. The `handoff_to_agent` tool with `returnDirect=true` is custom; a future port could use `a2a-server`/`a2a-client` to model peer-to-peer over A2A. |
+| **Swarm** | (no Spring AI equivalent — Strands-native) | `SwarmPattern.java`. Spring AI 2.0's agentic patterns are chain, parallelization, routing, orchestrator-workers and evaluator-optimizer; none is peer-to-peer handoff, so the `handoff_to_agent` tool with `returnDirect=true` stays custom. A future port could use `a2a-server`/`a2a-client` to model peer-to-peer over A2A. |
 
 ### What we adopted: `tool-choice-explanation` reasoning sidecar
 
-Inspired by the [`tool-choice-explanation`](https://github.com/habuma/spring-ai-recipes/tree/main/tool-choice-explanation) recipe (Spring AI 2.0.0-M5's `AugmentedToolCallbackProvider`). Since we're pinned to **Spring AI 1.1.6** for AgentCore compatibility, we hand-roll the same effect:
+Inspired by the [`tool-choice-explanation`](https://github.com/habuma/spring-ai-recipes/tree/main/tool-choice-explanation) recipe (Spring AI's `AugmentedToolCallbackProvider`). We hand-roll the same effect:
 
 - A typed record in [`api/dto/ToolChoiceExplanation.java`](backend/src/main/java/com/witcherish/samples/agents/api/dto/ToolChoiceExplanation.java) carries `innerThought` + `confidence` + `memoryNotes` alongside the real tool arguments.
-- `WriteResultTool.writeResult(...)` and the orchestrator's specialist `asTool(...)` both accept the record (or its lenient JSON shape) and forward `innerThought` to `Session.saveAgentMessage(role="reasoning", ...)`.
-- The frontend's existing `AgentMessage` subscription renders the reasoning in the Adventure Log alongside model output — viewers see *why* the orchestrator picked a specialist, *why* the agent shipped now, in real time.
+- `WriteResultTool.writeResult(...)` accepts the record (or its lenient JSON shape) and forwards `innerThought` to `Session.saveAgentMessage(role="reasoning", ...)`.
+- The frontend's existing `AgentMessage` subscription renders the reasoning in the Adventure Log alongside model output — viewers see *why* the agent shipped now, in real time.
 
-> The orchestrator's system prompt explicitly asks for `reasoning` on every specialist call. The Frontend specialist's `writeResult` reasoning is optional — Sonnet 4.x usually fills it in unprompted.
+> The orchestrator's reasoning lives in its plan's `analysis` field. The `writeResult` reasoning is optional — Sonnet 4.x usually fills it in unprompted.
 
 ### What we deliberately skipped (for now)
 
@@ -224,10 +224,10 @@ Each pattern's free-form final answer is also coerced into a `QuestResult` recor
 4. Land the punchline: **"This is what one well-defined agent contract buys you."**
 
 **Failure-mode demos worth keeping.** The kind that play well on stream:
-- **Spring AI strict-JSON quirk** → when the LLM emits a `tool_use.input` argument with raw newlines, Spring AI's `ModelOptionsUtils.OBJECT_MAPPER` fails to re-encode it on the next turn. We patch this globally at startup in `core/SpringAiJsonLeniency.java` (one `@PostConstruct`, flips `ALLOW_UNESCAPED_CONTROL_CHARS` on the static factory). Read the comment aloud — it's a great "production agentic AI has scars" moment, and it covers all four patterns at once.
+- **Spring AI strict-JSON quirk (fixed upstream)** → up to Spring AI 2.0.1, a `tool_use.input` with raw newlines broke the next turn's JSON parse, and this repo carried a global `SpringAiJsonLeniency` patch. Spring AI 2.0.2 serializes tool input as proper JSON, so the patch is gone. A good "production agentic AI has scars, and scars heal" moment.
 - **AgentCore cold start** (~30s on first invocation) → describe what the runtime is doing while the audience waits. CloudWatch tail makes the wait feel productive.
 - **Region-mismatched model ID** → pasting a `us.*` model ID into a JSON when running in `eu-central-1` gives an instant `ValidationException`. Fix on stream by changing one character. (Both `frontend/scripts/seed-data.py` and `frontend/src/utils/initData.ts` now read from canonical JSON in `frontend/src/data/{agents,quests}.json`, so the fix applies in one place.)
-- **Specialist failure leaking up** → when an orchestrator's specialist tool throws, the orchestrator gets a typed `Error in <agent>: <root-cause>` string. CloudWatch shows the full stack via `log.error("...", e)`. Bedrock SDK debug logs (`logging.level.software.amazon.awssdk.request=DEBUG`) carry the request ID + validation reason for post-mortem.
+- **Worker failure leaking up** → when an orchestrator worker throws, its slot in the result becomes a typed `Error in <agent>: <root-cause>` string and the plan continues. CloudWatch shows the full stack via `log.error("...", e)`. Bedrock SDK debug logs (`logging.level.software.amazon.awssdk.request=DEBUG`) carry the request ID + validation reason for post-mortem.
 
 > Local backend tail in Mode A: `cd backend && AWS_REGION=eu-central-1 mvn spring-boot:run`. The frontend doesn't care which Java process owns port 8080.
 
@@ -240,7 +240,7 @@ Each pattern's free-form final answer is also coerced into a `QuestResult` recor
 | Frontend "Local backend /local-runtime returned HTTP 500" | The local backend crashed — tail the terminal where you ran `mvn spring-boot:run`. |
 | Frontend never sees a response | Vite proxy isn't forwarding. Confirm `VITE_LOCAL_BACKEND_URL=/local-runtime` and that something is listening on 8080. |
 | `AccessDeniedException` from Bedrock | Enable model access in the AWS console: Bedrock → Model access → request access for Claude Sonnet 4.6 / Haiku 4.5 in `eu-central-1`. |
-| `ValidationException: model id ...` | Use the `eu.…` prefix (e.g. `eu.anthropic.claude-sonnet-4-6`). `us.…` profiles only work from US regions; `global.…` works from anywhere. |
+| `ValidationException: model id ...` | Use the `eu.…` prefix (e.g. `eu.anthropic.claude-sonnet-5-5`). `us.…` profiles only work from US regions; `global.…` works from anywhere. |
 | AgentCore invocation hangs >2 min | Cold start. First invocation after a deploy takes 30-90s while the container boots. Subsequent calls are warm. Use `--cli-read-timeout 600` with `aws bedrock-agentcore invoke-agent-runtime`. |
 | `useradd: UID 1000 is not unique` during Docker build | The Temurin base image already uses UID 1000; the Dockerfile pins UID 10001 to avoid this. If you forked, keep that pin. |
 | `ValidationException: Access denied while validating ECR URI` | The exec role is missing `ecr:GetAuthorizationToken` / `ecr:BatchGetImage` / `ecr:GetDownloadUrlForLayer`. `deploy.sh` adds them automatically — re-run it. |
@@ -249,7 +249,7 @@ Each pattern's free-form final answer is also coerced into a `QuestResult` recor
 | `npm ci` fails on Node < 18 | `nvm install 20`. |
 | Port 8080 already in use | One backend is still running. `lsof -i :8080` to find the PID, `kill <pid>`. |
 | `/events` returns 500 | Stale build — `cd backend && mvn clean compile` and restart. |
-| `JsonParseException: Illegal unquoted character ((CTRL-CHAR, code 10))` | Spring AI's `ModelOptionsUtils.OBJECT_MAPPER` re-encoding a stored `tool_use.input` containing raw newlines. Fixed at startup by `core/SpringAiJsonLeniency.java`; if the bug returns, confirm the bean is being instantiated (`grep '\[json-leniency\]' CloudWatch logs`). |
+| `JsonParseException: Illegal unquoted character ((CTRL-CHAR, code 10))` | A tool argument with raw newlines on Spring AI 2.0.1 or older. Check `spring-ai.version` in `backend/pom.xml` is 2.0.2 or newer. |
 | Frontend cards stay blank during a run | Java backend isn't reaching the MCP gateway. Confirm `config.gateway_url` and `config.token` in the request payload (frontend computes these from `outputs.custom.gatewayUrl`); CloudWatch should show `[telemetry] MCP session ready at …` at quest start. |
 | `Error in <agent> (<role>): null` in the orchestrator's reply | An older build. Newer code returns a real root-cause via `Throwables.rootMessage(e)` and stack-traces via `log.error("...", e)`. Redeploy. |
 | Agent uses a stale model ID after edit to `seed-data.py` or `initData.ts` | Both files now read from `frontend/src/data/{agents,quests}.json`. Edit the JSON, then either hit the Admin "Load Agents" button (adds rows) or hot-patch DynamoDB rows directly. `npx ampx sandbox` only reseeds when the table is empty. |
@@ -399,8 +399,7 @@ sample-agents-and-dragons/
 │       │   └── dto/                              # RequestPayload, Project, Team, QuestResult, …
 │       ├── core/
 │       │   ├── AgentFactory.java                 # ChatClient + advisor per AgentDefinition (BuiltAgent)
-│       │   ├── BedrockModels.java                # eu.* / global.* defaults
-│       │   └── SpringAiJsonLeniency.java         # @PostConstruct hot-fix for Spring AI strict-JSON quirk
+│       │   └── BedrockModels.java                # eu.* / global.* defaults
 │       ├── observer/
 │       │   ├── AgentEvent.java
 │       │   ├── EventLog.java                     # in-memory ring buffer for /events
@@ -409,8 +408,9 @@ sample-agents-and-dragons/
 │       ├── patterns/
 │       │   ├── PatternDispatcher.java            # opens MCP telemetry Session, dispatches by team.pattern
 │       │   ├── MonoPattern.java                  # Pattern 1.1 — Basic Reasoning
-│       │   ├── OrchestratorPattern.java          # Pattern 4.2 — Agents as Tools
+│       │   ├── OrchestratorPattern.java          # Orchestrator-Workers workflow
 │       │   ├── GraphPattern.java                 # Pattern 4.1 — Workflow DAG
+│       │   ├── ParallelizationWorkflow.java      # Parallelization workflow used by Graph
 │       │   ├── SwarmPattern.java                 # Pattern 4.2 — Peer + handoff
 │       │   └── StructuredAnswer.java             # Strands-style structured output → QuestResult
 │       ├── telemetry/
@@ -448,7 +448,7 @@ sample-agents-and-dragons/
 Aligned with the talk-flow:
 
 - [x] **Step 6 — Mono** (Pattern 1.1, Basic Reasoning) — single specialist agent.
-- [x] **Step 7 — Orchestrator** (Pattern 4.2, "Agents as Tools" — Strands doctrine) — entrypoint agent routes sub-tasks to specialists wrapped as tools.
+- [x] **Step 7 — Orchestrator** (Orchestrator-Workers workflow) — entrypoint agent returns a plan; the framework runs each sub-task on its worker.
 - [x] **Step 8 — Graph** (Pattern 4.1, Workflow DAG) — agents executed in topological order from `team.connections`.
 - [x] **Step 9 — Swarm** (Pattern 4.2, Peer + handoff) — peer agents with a `handoff_to_agent` tool and a bounded loop.
 - [x] **Step 10 — AgentCore deployment** — multi-stage ARM64 Dockerfile, ECR push, IAM exec role, `bedrock-agentcore-control create-agent-runtime`, read-back from the AgentCore registry.
@@ -456,6 +456,6 @@ Aligned with the talk-flow:
 - [x] **Step 12 — Live UI feed via MCP** — Java patterns publish `AgentRun` / `AgentTransition` / `AgentMessage` / `Task` / `Project` updates through the AgentCore MCP Gateway → `manage-tasks` Lambda → AppSync, so the React frontend's agent cards and Adventure Log animate during a run.
 - [x] **Step 13 — Strands-style structured output** — every pattern coerces its final answer into a `QuestResult` record via Spring AI's `BeanOutputConverter`, so the frontend reads `body.result.deliverableUrl` directly instead of parsing prose.
 - [x] **Step 14 — Real token + cycle aggregates** — `EventCaptureAdvisor` reads Spring AI's normalised `Usage` metadata; agent cards show actual prompt/completion/total tokens plus model-call cycle counts.
-- [x] **Step 15 — Production scars patched** — global `SpringAiJsonLeniency` workaround for the strict-JSON re-encoding bug, full-stack error logging via `Throwables.rootMessage(e)` + `log.error("...", e)`, AWS SDK request-level DEBUG logs in CloudWatch.
+- [x] **Step 15 — Production scars patched** — strict-JSON re-encoding bug (patched here until Spring AI 2.0.2 fixed it upstream), full-stack error logging via `Throwables.rootMessage(e)` + `log.error("...", e)`, AWS SDK request-level DEBUG logs in CloudWatch.
 - [x] **Step 16 — Canonical seed data** — `frontend/src/data/{agents,quests}.json` is the single source of truth; both the Admin "Load Agents" button (TS) and the `seed-data.py` bootstrap import the same files. Edits stop drifting between consumers.
-- [x] **Step 17 — `spring-ai-recipes` alignment** — `GraphPattern` Javadoc maps onto Alibaba `StateGraph` vocabulary; `OrchestratorPattern` and `WriteResultTool` adopt the [`tool-choice-explanation`](https://github.com/habuma/spring-ai-recipes/tree/main/tool-choice-explanation) recipe via a hand-rolled `ToolChoiceExplanation` record so the model's reasoning shows up live in the Adventure Log.
+- [x] **Step 17 — `spring-ai-recipes` alignment** — `GraphPattern` Javadoc maps onto Alibaba `StateGraph` vocabulary; `WriteResultTool` adopts the [`tool-choice-explanation`](https://github.com/habuma/spring-ai-recipes/tree/main/tool-choice-explanation) recipe via a hand-rolled `ToolChoiceExplanation` record so the model's reasoning shows up live in the Adventure Log.

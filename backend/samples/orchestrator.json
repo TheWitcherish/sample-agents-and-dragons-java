@@ -14,7 +14,7 @@
       {
         "id": "agent-coordinator",
         "name": "Coordinator",
-        "model": "eu.anthropic.claude-sonnet-4-6",
+        "model": "eu.anthropic.claude-sonnet-5-5",
         "prompt": "You are the Coordinator and the orchestrator of this delivery. You own the goal: ship the project's deliverable. You do not write code or architecture yourself — you decompose the goal, delegate each sub-task to the right specialist tool, then assemble the final deliverable from their outputs. Your final reply IS the deliverable the user receives.",
         "role": "delivery coordination",
         "tools": []
@@ -30,7 +30,7 @@
       {
         "id": "agent-frontend",
         "name": "Frontend Developer",
-        "model": "eu.anthropic.claude-sonnet-4-6",
+        "model": "eu.anthropic.claude-sonnet-5-5",
         "prompt": "You are a specialised Frontend Developer. You implement the actual HTML, CSS, and JavaScript for the requested app, following any architecture brief you receive. Produce a SINGLE self-contained `index.html` (with embedded CSS and JS) that runs in a modern browser and works on touchscreens. No external dependencies. After writing the code, you MUST call the `writeResult` tool to persist it (pass the full `<!DOCTYPE html>…` document as the `content` argument). Then return a ONE-LINE receipt: only the URL the writeResult tool returned. Do NOT include the HTML, do NOT include commentary — just the URL.",
         "role": "frontend implementation",
         "tools": []

@@ -1,8 +1,8 @@
 package com.witcherish.samples.agents.tools;
 
-import com.fasterxml.jackson.core.json.JsonReadFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.json.JsonMapper;
+import tools.jackson.core.json.JsonReadFeature;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.witcherish.samples.agents.api.dto.ToolChoiceExplanation;
 import com.witcherish.samples.agents.telemetry.McpTelemetryPublisher.Session;
 import org.slf4j.Logger;
@@ -257,7 +257,7 @@ public class WriteResultTool {
                 if (local == null) {
                     local = S3Client.builder()
                             .region(Region.of(region))
-                            .credentialsProvider(DefaultCredentialsProvider.create())
+                            .credentialsProvider(DefaultCredentialsProvider.builder().build())
                             .build();
                     s3 = local;
                 }

@@ -3,7 +3,7 @@
 # Build with:  docker buildx build --platform linux/arm64 ...
 #
 # Runtime expectations:
-#   - Spring Boot 3.5.14 + Spring AI 1.1.6 + MCP SDK 1.1.0 (see pom.xml)
+#   - Spring Boot 4.1.2 + Spring AI 2.0.2 + MCP SDK 1.1.0 (see pom.xml)
 #   - Listens on $PORT (default 8080), AgentCore-compatible /invocations endpoint
 #   - Reads AWS_REGION + BEDROCK_MODEL_ID from env (set by AgentCore Runtime)
 #   - Writes deliverables to S3 (when bucket configured) or $SAD_LOCAL_RUNS_DIR

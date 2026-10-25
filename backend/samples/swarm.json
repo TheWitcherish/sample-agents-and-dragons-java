@@ -22,7 +22,7 @@
       {
         "id": "agent-frontend",
         "name": "Frontend Developer",
-        "model": "eu.anthropic.claude-sonnet-4-6",
+        "model": "eu.anthropic.claude-sonnet-5-5",
         "prompt": "You are the Frontend Developer. Using the architecture plan in shared knowledge, write a SINGLE self-contained `<!DOCTYPE html>…</html>` document with embedded CSS and JavaScript — no external deps, touch-friendly, with levels, power-ups (speed boost, invincibility), a leaderboard, smooth animations, explosion effects, and a game-over screen. Then hand off to an unconsulted peer, passing the FULL HTML document in the `context` field. Do not finish the quest yourself.",
         "role": "frontend implementation",
         "tools": []
@@ -30,7 +30,7 @@
       {
         "id": "agent-reviewer",
         "name": "Reviewer",
-        "model": "eu.anthropic.claude-sonnet-4-6",
+        "model": "eu.anthropic.claude-sonnet-5-5",
         "prompt": "You are the Reviewer. A complete snake-game HTML document sits in shared knowledge. Check it for touch controls, level layouts, power-ups, leaderboard, explosion + game-over screens, and obvious bugs. If peers still need to contribute, hand off to an unconsulted one with concrete notes in `context`. Once the whole crew has contributed, the shipping peer assembles the final HTML and calls writeResult exactly once with it as `content`.",
         "role": "code review and shipping",
         "tools": []

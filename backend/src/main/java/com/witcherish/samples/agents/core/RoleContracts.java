@@ -8,8 +8,8 @@ import java.util.Locale;
  * Per-role and per-pattern system-prompt augmentations.
  *
  * <p>The seed data's prompts describe what each persona <em>is</em> (capabilities, style,
- * tone). Those prompts are generally polite — and weaker tool-using models (Haiku at
- * temperature 0.3) take politeness as license to skip the actual work, replying with
+ * tone). Those prompts are generally polite — and weaker tool-using models (Haiku)
+ * take politeness as license to skip the actual work, replying with
  * "I'll build it" prose instead of invoking the tool that ships the deliverable.
  *
  * <p>This class fixes that by composing two contracts onto every agent at build time:
@@ -21,7 +21,7 @@ import java.util.Locale;
  *       structured plans; etc.</li>
  *   <li>{@link #forPattern(String, boolean) Pattern epilogue} — how the role behaves in
  *       the surrounding pattern. The same Frontend UI agent has a different contract in
- *       Mono (it owns the whole quest) vs. Orchestrator (it's a specialist tool) vs.
+ *       Mono (it owns the whole quest) vs. Orchestrator (it's a planned worker) vs.
  *       Swarm (it can hand off to a Reviewer before shipping).</li>
  * </ol>
  *
@@ -307,28 +307,25 @@ public final class RoleContracts {
 
     private static final String ORCHESTRATOR_SPECIALIST_EPILOGUE = """
 
-            --- PATTERN: Orchestrator (you are a specialist) ---
-            You are being invoked AS A TOOL by an orchestrator agent. Do exactly the work \
-            this role specifies, return your output as text (or via `writeResult` if your \
-            role contract requires it), then STOP. You cannot delegate further; the agents \
-            you might want to call don't exist in your tool surface. Your reply will be \
-            sent back to the orchestrator as a tool result — keep it focused on the \
-            sub-task you were given, not the whole project.""";
+            --- PATTERN: Orchestrator-Workers (you are a worker) ---
+            The orchestrator planned the work and assigned you ONE sub-task. Do exactly the \
+            work this role specifies for that sub-task, return your output as text (or via \
+            `writeResult` if your role contract requires it), then STOP. You cannot delegate; \
+            there are no other agents in your tool surface. The framework hands your output to \
+            the workers that run after you, so keep it focused on your sub-task, not the whole \
+            project.""";
 
     private static final String ORCHESTRATOR_BOSS_EPILOGUE = """
 
-            --- PATTERN: Orchestrator (you are the orchestrator) ---
-            You are the entrypoint. Specialists are exposed to you AS TOOLS. Decompose the \
-            goal, call specialists in a sensible order, and integrate their outputs. The \
-            Frontend specialist RETURNS its complete index.html as text and the framework \
-            captures it — you get a short ACK, not a URL. Route that captured HTML through a \
-            Code Reviewer and/or Performance Analyst: they receive the current HTML \
-            automatically and RETURN a corrected version, which the framework re-captures and \
-            ships. VERIFY the Frontend delivered (its ACK confirms a captured index.html); if \
-            it returned prose instead, RE-INVOKE that specialist once with a stricter query. \
-            Do NOT call `writeResult` yourself except as a last resort if no specialist ever \
-            produces HTML. Your final reply must be a short plain-text summary; the framework \
-            attaches the deliverable URL.""";
+            --- PATTERN: Orchestrator-Workers (you are the orchestrator) ---
+            You PLAN; you do NOT call tools and you do NOT write code. Analyse the goal and break \
+            it into an ordered list of sub-tasks. Assign each sub-task to exactly ONE worker from \
+            the roster, using that worker's id. Workers run one after another in the order you \
+            list them, and each worker receives the outputs of the workers before it. The \
+            Frontend worker RETURNS the complete index.html; route it THROUGH a Code Reviewer \
+            and/or Performance Analyst, who receive the current HTML automatically and RETURN a \
+            corrected version. The framework ships the latest HTML. Your reply MUST be ONLY the \
+            JSON plan in the requested format.""";
 
     private static final String GRAPH_NODE_EPILOGUE = """
 
@@ -413,7 +410,11 @@ public final class RoleContracts {
         // uppercase keywords (MUST, MUST NOT, SHOULD, MAY, …) in the role contract +
         // pattern epilogue as binding rather than casual prose.
         prompt.append(RFC_2119_PREAMBLE);
-        prompt.append(forRole(def.role(), pattern));
+        // The orchestrator-workers planner returns a JSON plan, so it skips the role contract
+        // (written for agents that ship or route deliverables themselves).
+        if (!(pattern == Pattern.ORCHESTRATOR && isEntrypoint)) {
+            prompt.append(forRole(def.role(), pattern));
+        }
         prompt.append(forPattern(pattern, isEntrypoint));
         return new AgentDefinition(def.id(), def.name(), def.model(),
                 prompt.toString(), def.role(), def.tools());
